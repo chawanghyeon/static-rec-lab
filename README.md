@@ -68,6 +68,49 @@ make test
 make format
 ```
 
+## MovieLens 전처리
+
+`ratings.csv`를 사용자별 시간순 interaction sequence로 정렬한 뒤 sequential recommendation용
+prefix-target pair로 변환합니다.
+
+기본 입력 경로:
+
+```text
+data/raw/ratings.csv
+```
+
+실행:
+
+```bash
+make preprocess
+```
+
+환경 변수로 입력/출력과 필터 기준을 바꿀 수 있습니다.
+
+```bash
+RAW_RATINGS=data/raw/ml-latest-small/ratings.csv \
+PROCESSED_DIR=data/processed \
+MIN_INTERACTIONS=5 \
+MAX_HISTORY_LENGTH=50 \
+make preprocess
+```
+
+생성 파일:
+
+```text
+data/processed/train.parquet
+data/processed/valid.parquet
+data/processed/test.parquet
+```
+
+split 정책:
+
+- 사용자별 interaction을 `timestamp` 기준으로 정렬합니다.
+- `MIN_INTERACTIONS`보다 interaction 수가 적은 사용자는 제외합니다.
+- 각 사용자 sequence의 마지막 item은 test target으로 사용합니다.
+- 마지막 직전 item은 valid target으로 사용합니다.
+- 그 이전 prefix-target pair는 train 예제로 사용합니다.
+
 ## 프로젝트 구조
 
 ```text

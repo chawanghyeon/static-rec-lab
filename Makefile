@@ -1,7 +1,11 @@
 UV ?= uv
 PYTHON_TARGETS := apps recsys scripts tests
+RAW_RATINGS ?= data/raw/ratings.csv
+PROCESSED_DIR ?= data/processed
+MIN_INTERACTIONS ?= 5
+MAX_HISTORY_LENGTH ?= 50
 
-.PHONY: format lint test benchmark-decoder check
+.PHONY: format lint test preprocess benchmark-decoder check
 
 format:
 	$(UV) run ruff format $(PYTHON_TARGETS)
@@ -14,6 +18,13 @@ lint:
 
 test:
 	$(UV) run pytest
+
+preprocess:
+	$(UV) run python scripts/preprocess.py \
+		--ratings-csv $(RAW_RATINGS) \
+		--output-dir $(PROCESSED_DIR) \
+		--min-interactions $(MIN_INTERACTIONS) \
+		--max-history-length $(MAX_HISTORY_LENGTH)
 
 benchmark-decoder:
 	$(UV) run python scripts/benchmark_decoder.py
