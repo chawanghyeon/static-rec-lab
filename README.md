@@ -120,6 +120,17 @@ split 정책:
 - 마지막 직전 item은 valid target으로 사용합니다.
 - 그 이전 prefix-target pair는 train 예제로 사용합니다.
 
+## 평가 지표
+
+추천 ranking 평가는 `recsys.evaluation`의 순수 함수로 계산합니다.
+
+- `Recall@K`: 정답 item 중 top-K 추천에 포함된 비율
+- `NDCG@K`: 정답 item이 ranking 상위에 있을수록 높은 점수를 주는 discounted gain
+- `MRR`: 첫 번째 정답 item이 등장한 rank의 reciprocal
+
+중복 추천은 여러 번 맞힌 것으로 세지 않습니다. 다만 중복 item도 ranking 위치를 차지하므로
+NDCG에서는 낮은 순위의 정답처럼 penalty가 반영됩니다.
+
 ## 프로젝트 구조
 
 ```text
