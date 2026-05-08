@@ -9,6 +9,18 @@
 
 ## 전처리 입력
 
+MovieLens 데이터는 다음 명령으로 다운로드합니다.
+
+```bash
+make download-movielens
+```
+
+기본 다운로드 대상은 GroupLens의 MovieLens Latest Small 데이터셋입니다.
+
+```text
+data/raw/ml-latest-small/ratings.csv
+```
+
 MovieLens `ratings.csv`는 다음 컬럼을 사용합니다.
 
 - `userId`
@@ -21,3 +33,5 @@ MovieLens `ratings.csv`는 다음 컬럼을 사용합니다.
 - `processed/train.parquet`
 - `processed/valid.parquet`
 - `processed/test.parquet`
+
+원본 zip, CSV, parquet 결과물은 재생성 가능한 파일이므로 Git에 커밋하지 않습니다.

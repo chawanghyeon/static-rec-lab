@@ -73,16 +73,25 @@ make format
 `ratings.csv`를 사용자별 시간순 interaction sequence로 정렬한 뒤 sequential recommendation용
 prefix-target pair로 변환합니다.
 
+실제 데이터는 Git에 커밋하지 않습니다. 대신 GroupLens의 MovieLens Latest Small 데이터를
+로컬 `data/raw/` 아래에 다운로드해서 사용합니다.
+
+다운로드:
+
+```bash
+make download-movielens
+```
+
 기본 입력 경로:
 
 ```text
-data/raw/ratings.csv
+data/raw/ml-latest-small/ratings.csv
 ```
 
 실행:
 
 ```bash
-make preprocess
+RAW_RATINGS=data/raw/ml-latest-small/ratings.csv make preprocess
 ```
 
 환경 변수로 입력/출력과 필터 기준을 바꿀 수 있습니다.
