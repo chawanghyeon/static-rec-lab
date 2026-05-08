@@ -1,0 +1,10 @@
+services:
+  api:
+    build:
+      context: .
+    command: uv run python -m apps.api.main
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
+    ports:
+      - "8000:8000"

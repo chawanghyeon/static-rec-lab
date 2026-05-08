@@ -1,0 +1,9 @@
+# 리포트
+
+이 디렉터리에는 실험 결과와 구현 trade-off를 한국어로 정리합니다.
+
+예정 리포트:
+
+- `baseline.md`: baseline 추천 성능
+- `semantic_id.md`: Semantic ID 생성 방식과 검증 결과
+- `decoder_benchmark.md`: naive trie와 STATIC-style decoder 비교
