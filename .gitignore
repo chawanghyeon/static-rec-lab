@@ -218,6 +218,10 @@ data/processed/*
 !data/raw/.gitkeep
 !data/processed/.gitkeep
 
+# Generated model artifacts
+artifacts/*
+!artifacts/.gitkeep
+
 # Marimo
 marimo/_static/
 marimo/_lsp/

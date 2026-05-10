@@ -131,6 +131,36 @@ split 정책:
 중복 추천은 여러 번 맞힌 것으로 세지 않습니다. 다만 중복 item도 ranking 위치를 차지하므로
 NDCG에서는 낮은 순위의 정답처럼 penalty가 반영됩니다.
 
+## Baseline
+
+Generative Retrieval 모델과 비교하기 위한 baseline입니다.
+
+- Popularity baseline: `train.parquet`의 `target_item_id` 빈도로 item ranking을 만듭니다.
+- Item co-occurrence baseline: 사용자 history item과 target item의 co-occurrence count로
+  개인화된 ranking을 만듭니다.
+
+두 baseline 모두 평가 시 사용자 history에 이미 등장한 item은 추천에서 제외합니다.
+
+학습:
+
+```bash
+make train-baseline
+```
+
+평가:
+
+```bash
+make eval-baseline
+```
+
+생성 파일:
+
+```text
+artifacts/baseline/popularity.json
+artifacts/baseline/item_knn.json
+reports/baseline.md
+```
+
 ## 프로젝트 구조
 
 ```text
