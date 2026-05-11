@@ -161,6 +161,25 @@ artifacts/baseline/item_knn.json
 reports/baseline.md
 ```
 
+## Semantic ID Codec
+
+Generative Retrieval 모델은 item을 직접 분류하지 않고, item에 대응하는 고정 길이 token
+sequence인 Semantic ID를 생성합니다. codec은 clustering 단계에서 만들어진 mapping을 받아
+다음 변환을 담당합니다.
+
+```text
+item_id -> semantic_id
+semantic_id -> item_id
+```
+
+현재 codec은 다음 조건을 검증합니다.
+
+- 모든 Semantic ID는 비어 있지 않아야 합니다.
+- 모든 Semantic ID는 같은 길이여야 합니다.
+- 서로 다른 item이 같은 Semantic ID를 공유하면 오류로 처리합니다.
+- 알 수 없는 item_id 또는 Semantic ID 조회는 명시적인 예외로 처리합니다.
+- JSON 저장/로드를 지원합니다.
+
 ## 프로젝트 구조
 
 ```text
