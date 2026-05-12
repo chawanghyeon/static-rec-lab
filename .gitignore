@@ -221,6 +221,9 @@ data/processed/*
 # Generated model artifacts
 artifacts/*
 !artifacts/.gitkeep
+!artifacts/semantic_id/
+artifacts/semantic_id/*
+!artifacts/semantic_id/.gitkeep
 
 # Marimo
 marimo/_static/

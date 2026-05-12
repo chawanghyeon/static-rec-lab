@@ -9,10 +9,15 @@ BASELINE_DIR ?= artifacts/baseline
 BASELINE_REPORT ?= reports/baseline.md
 ITEM_KNN_MAX_CANDIDATES ?= 200
 ITEM_KNN_MAX_HISTORY_ITEMS ?= 50
+SEMANTIC_ID_PATH ?= artifacts/semantic_id/semantic_ids.json
+SEMANTIC_ID_REPORT ?= reports/semantic_id.md
+SEMANTIC_ID_DEPTH ?= 4
+SEMANTIC_ID_BRANCHING_FACTOR ?= 16
+SEMANTIC_ID_COMPONENTS ?= 32
 MIN_INTERACTIONS ?= 5
 MAX_HISTORY_LENGTH ?= 50
 
-.PHONY: format lint test download-movielens preprocess train-baseline eval-baseline benchmark-decoder check
+.PHONY: format lint test download-movielens preprocess train-baseline eval-baseline build-semantic-ids validate-semantic-ids benchmark-decoder check
 
 format:
 	$(UV) run ruff format $(PYTHON_TARGETS)
@@ -52,6 +57,20 @@ eval-baseline:
 		--valid-parquet $(PROCESSED_DIR)/valid.parquet \
 		--test-parquet $(PROCESSED_DIR)/test.parquet \
 		--report-path $(BASELINE_REPORT)
+
+build-semantic-ids:
+	$(UV) run python scripts/build_semantic_ids.py \
+		--train-parquet $(PROCESSED_DIR)/train.parquet \
+		--output-path $(SEMANTIC_ID_PATH) \
+		--report-path $(SEMANTIC_ID_REPORT) \
+		--depth $(SEMANTIC_ID_DEPTH) \
+		--branching-factor $(SEMANTIC_ID_BRANCHING_FACTOR) \
+		--n-components $(SEMANTIC_ID_COMPONENTS) \
+		--max-history-items $(MAX_HISTORY_LENGTH)
+
+validate-semantic-ids:
+	$(UV) run python scripts/validate_semantic_ids.py \
+		--semantic-id-path $(SEMANTIC_ID_PATH)
 
 benchmark-decoder:
 	$(UV) run python scripts/benchmark_decoder.py

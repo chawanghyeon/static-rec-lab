@@ -22,7 +22,7 @@ STATIC-style sparse transition 방식의 정확성 및 지연시간 차이를 �
 - Recall@K, NDCG@K, MRR 평가 지표
 - Popularity 및 item co-occurrence baseline
 - item_id와 Semantic ID 간 codec
-- hierarchical clustering 기반 Semantic ID 생성
+- hierarchical balanced k-means 기반 Semantic ID 생성
 - naive trie constrained decoder
 - STATIC-style matrix constrained decoder
 - decoder latency 및 throughput benchmark
@@ -31,7 +31,8 @@ STATIC-style sparse transition 방식의 정확성 및 지연시간 차이를 �
 
 ## 현재 단계
 
-현재 레포지토리는 Milestone 0, 즉 개발 환경과 프로젝트 구조를 고정하는 단계입니다.
+현재 레포지토리는 데이터셋 파이프라인, 평가 지표, baseline, Semantic ID codec,
+Semantic ID 생성까지 구현된 상태입니다. 다음 단계는 naive trie constrained decoder입니다.
 
 완료 기준:
 
@@ -39,6 +40,10 @@ STATIC-style sparse transition 방식의 정확성 및 지연시간 차이를 �
 make lint
 make test
 make format
+make train-baseline
+make eval-baseline
+make build-semantic-ids
+make validate-semantic-ids
 ```
 
 ## 개발 환경
@@ -179,6 +184,27 @@ semantic_id -> item_id
 - 서로 다른 item이 같은 Semantic ID를 공유하면 오류로 처리합니다.
 - 알 수 없는 item_id 또는 Semantic ID 조회는 명시적인 예외로 처리합니다.
 - JSON 저장/로드를 지원합니다.
+
+## Semantic ID 생성
+
+`train.parquet`의 history-target co-occurrence를 sparse interaction matrix로 만들고,
+Truncated SVD로 dense item embedding을 만든 뒤 hierarchical balanced k-means로 고정 길이
+Semantic ID를 생성합니다. 각 subtree의 capacity를 넘지 않도록 cluster 순서를 balanced chunk로
+나누기 때문에 모든 item에 고유한 Semantic ID를 부여할 수 있습니다.
+
+실행:
+
+```bash
+make build-semantic-ids
+make validate-semantic-ids
+```
+
+생성 파일:
+
+```text
+artifacts/semantic_id/semantic_ids.json
+reports/semantic_id.md
+```
 
 ## 프로젝트 구조
 

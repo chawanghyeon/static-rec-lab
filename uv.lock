@@ -1169,8 +1169,11 @@ name = "static-rec-lab"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "numpy" },
     { name = "pandas" },
     { name = "pyarrow" },
+    { name = "scikit-learn" },
+    { name = "scipy" },
 ]
 
 [package.optional-dependencies]
@@ -1179,9 +1182,6 @@ api = [
     { name = "uvicorn", extra = ["standard"] },
 ]
 ml = [
-    { name = "numpy" },
-    { name = "scikit-learn" },
-    { name = "scipy" },
     { name = "torch" },
 ]
 
@@ -1196,11 +1196,11 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "fastapi", marker = "extra == 'api'", specifier = ">=0.115" },
-    { name = "numpy", marker = "extra == 'ml'", specifier = ">=1.26" },
+    { name = "numpy", specifier = ">=1.26" },
     { name = "pandas", specifier = ">=2.2" },
     { name = "pyarrow", specifier = ">=16.0" },
-    { name = "scikit-learn", marker = "extra == 'ml'", specifier = ">=1.5" },
-    { name = "scipy", marker = "extra == 'ml'", specifier = ">=1.13" },
+    { name = "scikit-learn", specifier = ">=1.5" },
+    { name = "scipy", specifier = ">=1.13" },
     { name = "torch", marker = "extra == 'ml'", specifier = ">=2.3" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'api'", specifier = ">=0.30" },
 ]
