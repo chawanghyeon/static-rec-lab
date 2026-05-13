@@ -5,12 +5,10 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-import pandas as pd
-
 from recsys.semantic_id import (
     HierarchicalKMeansConfig,
     ItemEmbeddingConfig,
-    build_item_interaction_embeddings,
+    build_item_interaction_embeddings_from_parquet,
     build_semantic_id_codec,
     write_semantic_id_report,
 )
@@ -38,7 +36,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--depth", type=int, default=4, help="Semantic ID depth")
     parser.add_argument("--branching-factor", type=int, default=16, help="분기 수")
-    parser.add_argument("--n-components", type=int, default=32, help="SVD embedding 차원")
+    parser.add_argument(
+        "--n-components", type=int, default=32, help="co-occurrence projection 차원"
+    )
     parser.add_argument("--max-history-items", type=int, default=50, help="최근 history item 수")
     parser.add_argument("--random-state", type=int, default=42, help="랜덤 시드")
     return parser.parse_args()
@@ -46,9 +46,8 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    train_frame = pd.read_parquet(args.train_parquet)
-    embeddings = build_item_interaction_embeddings(
-        train_frame,
+    embeddings = build_item_interaction_embeddings_from_parquet(
+        args.train_parquet,
         ItemEmbeddingConfig(
             n_components=args.n_components,
             max_history_items=args.max_history_items,
@@ -69,6 +68,8 @@ def main() -> None:
     print("Semantic ID 생성 완료")
     print(f"- items: {result.codec.num_items}")
     print(f"- semantic_id_length: {result.codec.semantic_id_length}")
+    print(f"- train_examples: {result.num_examples}")
+    print(f"- embedding_examples: {result.num_embedding_examples}")
     print(f"- embedding_dim: {result.embedding_dim}")
     print(f"- output: {output_path}")
     print(f"- report: {report_path}")

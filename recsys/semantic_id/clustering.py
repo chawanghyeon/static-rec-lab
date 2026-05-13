@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import math
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 from sklearn.cluster import KMeans  # type: ignore[import-untyped]
+from sklearn.exceptions import ConvergenceWarning  # type: ignore[import-untyped]
 
 from recsys.semantic_id.codec import SemanticId, SemanticIdCodec
 from recsys.semantic_id.embedding import ItemEmbeddings
@@ -49,6 +51,8 @@ class SemanticIdBuildResult:
     codec: SemanticIdCodec
     config: HierarchicalKMeansConfig
     embedding_dim: int
+    num_examples: int
+    num_embedding_examples: int
     num_context_edges: int
 
 
@@ -67,6 +71,8 @@ def build_semantic_id_codec(
         codec=codec,
         config=config,
         embedding_dim=item_embeddings.embedding_dim,
+        num_examples=item_embeddings.num_examples,
+        num_embedding_examples=item_embeddings.num_embedding_examples,
         num_context_edges=item_embeddings.num_context_edges,
     )
 
@@ -105,8 +111,9 @@ def write_semantic_id_report(
         "## 생성 방식",
         "",
         "- train split의 history-target co-occurrence로 item interaction matrix를 만듭니다.",
-        "- sparse matrix를 Truncated SVD로 축소한 뒤 item 빈도와 정규화된 item 순서 "
-        "feature를 더합니다.",
+        "- 전체 train example을 배치 단위로 읽고, source item을 hashed projection으로 "
+        "누적해 dense item embedding을 만듭니다.",
+        "- item 빈도와 정규화된 item 순서 feature를 embedding에 더합니다.",
         "- hierarchical balanced k-means로 token path를 만들고, 각 subtree capacity를 "
         "넘지 않게 balanced chunk로 나눕니다.",
         "- 이 방식은 clustering 구조를 사용하면서도 모든 item에 중복 없는 고정 길이 "
@@ -119,6 +126,8 @@ def write_semantic_id_report(
         f"- capacity: {result.config.capacity}",
         f"- item 수: {result.codec.num_items}",
         f"- Semantic ID 길이: {result.codec.semantic_id_length}",
+        f"- train example 수: {result.num_examples}",
+        f"- embedding 계산 example 수: {result.num_embedding_examples}",
         f"- embedding dimension: {result.embedding_dim}",
         f"- context edge 수: {result.num_context_edges}",
         f"- output: `{output_path}`",
@@ -185,18 +194,22 @@ def _order_indices_by_kmeans(
     config: HierarchicalKMeansConfig,
 ) -> np.ndarray:
     local_embeddings = embeddings[indices]
-    model = KMeans(
-        n_clusters=num_children,
-        random_state=config.random_state,
-        n_init=config.n_init,
-        max_iter=config.max_iter,
+    num_clusters = min(num_children, np.unique(local_embeddings, axis=0).shape[0])
+    if num_clusters <= 1:
+        return np.asarray(sorted(indices.tolist()), dtype=np.int64)
+
+    labels, centers = _fit_kmeans_without_cluster_collapse(
+        local_embeddings=local_embeddings,
+        num_clusters=num_clusters,
+        config=config,
     )
-    labels = model.fit_predict(local_embeddings)
-    centers = model.cluster_centers_
+    if len(centers) <= 1:
+        return np.asarray(sorted(indices.tolist()), dtype=np.int64)
+
     label_order = {
         label: order
         for order, label in enumerate(
-            sorted(range(num_children), key=lambda label: tuple(centers[label].tolist()))
+            sorted(range(len(centers)), key=lambda label: tuple(centers[label].tolist()))
         )
     }
     distances = np.linalg.norm(local_embeddings - centers[labels], axis=1)
@@ -209,6 +222,37 @@ def _order_indices_by_kmeans(
         ),
     )
     return indices[ordered_positions]
+
+
+def _fit_kmeans_without_cluster_collapse(
+    local_embeddings: np.ndarray,
+    num_clusters: int,
+    config: HierarchicalKMeansConfig,
+) -> tuple[np.ndarray, np.ndarray]:
+    for current_clusters in range(num_clusters, 1, -1):
+        model = KMeans(
+            n_clusters=current_clusters,
+            random_state=config.random_state,
+            n_init=config.n_init,
+            max_iter=config.max_iter,
+        )
+        with warnings.catch_warnings(record=True) as caught_warnings:
+            warnings.simplefilter("always", ConvergenceWarning)
+            labels = model.fit_predict(local_embeddings)
+
+        collapsed = len(set(int(label) for label in labels)) < current_clusters
+        warned = any(
+            issubclass(warning.category, ConvergenceWarning) for warning in caught_warnings
+        )
+        if not collapsed and not warned:
+            return np.asarray(labels, dtype=np.int64), np.asarray(
+                model.cluster_centers_,
+                dtype=np.float64,
+            )
+
+    labels = np.zeros(len(local_embeddings), dtype=np.int64)
+    centers = np.mean(local_embeddings, axis=0, keepdims=True)
+    return labels, np.asarray(centers, dtype=np.float64)
 
 
 def _validate_inputs(

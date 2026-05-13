@@ -33,6 +33,60 @@ def test_fit_item_knn_model_builds_neighbors_from_history_targets() -> None:
     )
 
 
+def test_fit_item_knn_model_from_parquet_uses_all_examples(tmp_path: Path) -> None:
+    from recsys.baseline import fit_item_knn_model_from_parquet
+
+    train_frame = pd.DataFrame(
+        {
+            "history_item_ids": [[1, 2], [1], [2], [1, 3]],
+            "target_item_id": [10, 10, 20, 20],
+        }
+    )
+    train_path = tmp_path / "train.parquet"
+    train_frame.to_parquet(train_path, index=False)
+
+    model = fit_item_knn_model_from_parquet(
+        train_path,
+        max_candidates_per_item=10,
+        max_history_items=50,
+    )
+
+    assert model.num_train_examples == 4
+    assert model.neighbors[1] == (
+        CooccurrenceCandidate(item_id=10, count=2),
+        CooccurrenceCandidate(item_id=20, count=1),
+    )
+    assert model.neighbors[2] == (
+        CooccurrenceCandidate(item_id=10, count=1),
+        CooccurrenceCandidate(item_id=20, count=1),
+    )
+
+
+def test_fit_item_knn_model_from_parquet_respects_max_history_items_and_deduplicates(
+    tmp_path: Path,
+) -> None:
+    from recsys.baseline import fit_item_knn_model_from_parquet
+
+    train_frame = pd.DataFrame(
+        {
+            "history_item_ids": [[1, 2, 3], [1, 1]],
+            "target_item_id": [10, 20],
+        }
+    )
+    train_path = tmp_path / "train.parquet"
+    train_frame.to_parquet(train_path, index=False)
+
+    model = fit_item_knn_model_from_parquet(
+        train_path,
+        max_candidates_per_item=10,
+        max_history_items=1,
+    )
+
+    assert model.neighbors[1] == (CooccurrenceCandidate(item_id=20, count=1),)
+    assert 2 not in model.neighbors
+    assert model.neighbors[3] == (CooccurrenceCandidate(item_id=10, count=1),)
+
+
 def test_item_knn_recommend_aggregates_history_scores_and_excludes_seen() -> None:
     model = ItemKNNModel(
         neighbors={

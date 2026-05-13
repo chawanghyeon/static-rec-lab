@@ -11,15 +11,15 @@
 ## 설정
 
 - depth: 4
-- branching factor: 16
-- capacity: 65536
-- item 수: 9681
+- branching factor: 32
+- capacity: 1048576
+- item 수: 84259
 - Semantic ID 길이: 4
-- train example 수: 99006
-- embedding 계산 example 수: 99006
+- train example 수: 31397360
+- embedding 계산 example 수: 31397360
 - embedding dimension: 35
-- context edge 수: 4261752
-- output: `artifacts/semantic_id/semantic_ids.json`
+- context edge 수: 1342214049
+- output: `artifacts/semantic_id/ml-32m/semantic_ids.json`
 
 ## 검증
 

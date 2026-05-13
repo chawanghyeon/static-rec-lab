@@ -187,10 +187,10 @@ semantic_id -> item_id
 
 ## Semantic ID 생성
 
-`train.parquet`의 history-target co-occurrence를 sparse interaction matrix로 만들고,
-Truncated SVD로 dense item embedding을 만든 뒤 hierarchical balanced k-means로 고정 길이
-Semantic ID를 생성합니다. 각 subtree의 capacity를 넘지 않도록 cluster 순서를 balanced chunk로
-나누기 때문에 모든 item에 고유한 Semantic ID를 부여할 수 있습니다.
+`train.parquet`의 전체 history-target co-occurrence를 배치 단위로 읽고, source item을
+hashed projection으로 누적해 dense item embedding을 만든 뒤 hierarchical balanced k-means로
+고정 길이 Semantic ID를 생성합니다. 각 subtree의 capacity를 넘지 않도록 cluster 순서를
+balanced chunk로 나누기 때문에 모든 item에 고유한 Semantic ID를 부여할 수 있습니다.
 
 실행:
 
@@ -199,12 +199,25 @@ make build-semantic-ids
 make validate-semantic-ids
 ```
 
+MovieLens 32M처럼 item 수가 많은 데이터셋에서는 capacity가 충분하도록 branching factor를
+키워야 합니다.
+
+```bash
+PROCESSED_DIR=data/processed/ml-32m \
+SEMANTIC_ID_PATH=artifacts/semantic_id/ml-32m/semantic_ids.json \
+SEMANTIC_ID_REPORT=reports/ml_32m_semantic_id.md \
+SEMANTIC_ID_BRANCHING_FACTOR=32 \
+make build-semantic-ids
+```
+
 생성 파일:
 
 ```text
 artifacts/semantic_id/semantic_ids.json
 reports/semantic_id.md
 ```
+
+대용량 검증 결과는 `reports/ml_32m_validation.md`에 정리합니다.
 
 ## 프로젝트 구조
 

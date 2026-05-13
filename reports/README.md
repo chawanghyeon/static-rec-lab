@@ -6,4 +6,5 @@
 
 - `baseline.md`: baseline 추천 성능
 - `semantic_id.md`: Semantic ID 생성 방식과 검증 결과
+- `ml_32m_validation.md`: MovieLens 32M 대용량 smoke/performance 검증
 - `decoder_benchmark.md`: naive trie와 STATIC-style decoder 비교

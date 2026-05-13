@@ -6,9 +6,11 @@ import json
 from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass
+from functools import cached_property
 from pathlib import Path
 from typing import Any, Final
 
+import duckdb
 import pandas as pd
 
 from recsys.baseline.popularity import PopularItem, fit_popularity_model
@@ -36,6 +38,11 @@ class ItemKNNModel:
     max_candidates_per_item: int
     max_history_items: int
 
+    @cached_property
+    def popularity_rank(self) -> dict[int, int]:
+        """item_id별 popularity rank cache."""
+        return {item.item_id: item.rank for item in self.popularity_items}
+
     def recommend(self, history_item_ids: Iterable[int], k: int) -> list[int]:
         """history item들의 co-occurrence score를 합산해 top-K item을 추천한다."""
         if k < 1:
@@ -45,7 +52,6 @@ class ItemKNNModel:
         history = [int(item_id) for item_id in history_item_ids]
         seen = set(history)
         query_items = history[-self.max_history_items :]
-        popularity_rank = {item.item_id: item.rank for item in self.popularity_items}
 
         scores: dict[int, int] = defaultdict(int)
         for source_item_id in query_items:
@@ -58,7 +64,7 @@ class ItemKNNModel:
             scores,
             key=lambda item_id: (
                 -scores[item_id],
-                popularity_rank.get(item_id, len(popularity_rank) + 1),
+                self.popularity_rank.get(item_id, len(self.popularity_rank) + 1),
                 item_id,
             ),
         )
@@ -134,9 +140,39 @@ def fit_item_knn_model_from_parquet(
     max_candidates_per_item: int = DEFAULT_MAX_CANDIDATES_PER_ITEM,
     max_history_items: int = DEFAULT_MAX_HISTORY_ITEMS,
 ) -> ItemKNNModel:
-    """train parquet 파일에서 item KNN model을 학습한다."""
-    return fit_item_knn_model(
-        pd.read_parquet(train_parquet),
+    """train parquet 파일에서 전체 example 기반 item KNN model을 학습한다."""
+    if max_candidates_per_item < 1:
+        msg = "max_candidates_per_item은 1 이상이어야 합니다."
+        raise ValueError(msg)
+    if max_history_items < 1:
+        msg = "max_history_items는 1 이상이어야 합니다."
+        raise ValueError(msg)
+
+    parquet_path = _sql_string(train_parquet)
+    connection = duckdb.connect(database=":memory:")
+    try:
+        connection.execute("SET preserve_insertion_order = false")
+        popularity_items = _fit_popularity_items_with_duckdb(connection, parquet_path)
+        neighbors = _fit_neighbors_with_duckdb(
+            connection=connection,
+            parquet_path=parquet_path,
+            max_candidates_per_item=max_candidates_per_item,
+            max_history_items=max_history_items,
+        )
+        count_row = connection.execute(
+            f"SELECT count(*) FROM read_parquet('{parquet_path}')"
+        ).fetchone()
+        if count_row is None:
+            msg = "train parquet row count를 계산할 수 없습니다."
+            raise ValueError(msg)
+        num_train_examples = int(count_row[0])
+    finally:
+        connection.close()
+
+    return ItemKNNModel(
+        neighbors=neighbors,
+        popularity_items=popularity_items,
+        num_train_examples=num_train_examples,
         max_candidates_per_item=max_candidates_per_item,
         max_history_items=max_history_items,
     )
@@ -157,7 +193,10 @@ def save_item_knn_model(model: ItemKNNModel, output_path: str | Path) -> Path:
             for source_item_id, candidates in model.neighbors.items()
         },
     }
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    path.write_text(
+        json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+        encoding="utf-8",
+    )
     return path
 
 
@@ -227,6 +266,114 @@ def _coerce_item_ids(value: Any) -> list[int]:
     if isinstance(value, int):
         return [value]
     return [int(item_id) for item_id in value]
+
+
+def _fit_popularity_items_with_duckdb(
+    connection: duckdb.DuckDBPyConnection,
+    parquet_path: str,
+) -> tuple[PopularItem, ...]:
+    rows = connection.execute(
+        f"""
+        WITH counts AS (
+            SELECT
+                target_item_id AS item_id,
+                count(*) AS item_count
+            FROM read_parquet('{parquet_path}')
+            GROUP BY target_item_id
+        )
+        SELECT
+            item_id,
+            item_count,
+            row_number() OVER (ORDER BY item_count DESC, item_id ASC) AS item_rank
+        FROM counts
+        ORDER BY item_rank
+        """
+    ).fetchall()
+    return tuple(
+        PopularItem(item_id=int(item_id), count=int(count), rank=int(rank))
+        for item_id, count, rank in rows
+    )
+
+
+def _fit_neighbors_with_duckdb(
+    connection: duckdb.DuckDBPyConnection,
+    parquet_path: str,
+    max_candidates_per_item: int,
+    max_history_items: int,
+) -> Mapping[int, tuple[CooccurrenceCandidate, ...]]:
+    rows = connection.execute(
+        f"""
+        WITH popularity AS (
+            SELECT
+                target_item_id AS item_id,
+                count(*) AS item_count,
+                row_number() OVER (
+                    ORDER BY count(*) DESC, target_item_id ASC
+                ) AS item_rank
+            FROM read_parquet('{parquet_path}')
+            GROUP BY target_item_id
+        ),
+        examples AS (
+            SELECT
+                row_number() OVER () AS example_id,
+                target_item_id,
+                list_slice(
+                    history_item_ids,
+                    greatest(len(history_item_ids) - ? + 1, 1),
+                    len(history_item_ids)
+                ) AS history_item_ids
+            FROM read_parquet('{parquet_path}')
+        ),
+        history_pairs AS (
+            SELECT DISTINCT
+                example_id,
+                unnest(history_item_ids) AS source_item_id,
+                target_item_id
+            FROM examples
+        ),
+        pair_counts AS (
+            SELECT
+                source_item_id,
+                target_item_id,
+                count(*) AS pair_count
+            FROM history_pairs
+            WHERE source_item_id <> target_item_id
+            GROUP BY source_item_id, target_item_id
+        ),
+        ranked AS (
+            SELECT
+                pair_counts.source_item_id,
+                pair_counts.target_item_id,
+                pair_counts.pair_count,
+                row_number() OVER (
+                    PARTITION BY pair_counts.source_item_id
+                    ORDER BY
+                        pair_counts.pair_count DESC,
+                        coalesce(popularity.item_rank, 9223372036854775807),
+                        pair_counts.target_item_id ASC
+                ) AS candidate_rank
+            FROM pair_counts
+            LEFT JOIN popularity
+                ON pair_counts.target_item_id = popularity.item_id
+        )
+        SELECT source_item_id, target_item_id, pair_count
+        FROM ranked
+        WHERE candidate_rank <= ?
+        ORDER BY source_item_id ASC, candidate_rank ASC
+        """,
+        [max_history_items, max_candidates_per_item],
+    ).fetchall()
+
+    neighbors: dict[int, list[CooccurrenceCandidate]] = defaultdict(list)
+    for source_item_id, target_item_id, count in rows:
+        neighbors[int(source_item_id)].append(
+            CooccurrenceCandidate(item_id=int(target_item_id), count=int(count))
+        )
+    return {source_item_id: tuple(candidates) for source_item_id, candidates in neighbors.items()}
+
+
+def _sql_string(path: str | Path) -> str:
+    return str(Path(path)).replace("'", "''")
 
 
 def _validate_model_payload(payload: Any) -> None:

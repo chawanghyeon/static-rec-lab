@@ -1,5 +1,8 @@
+import warnings
+
 import numpy as np
 import pytest
+from sklearn.exceptions import ConvergenceWarning  # type: ignore[import-untyped]
 
 from recsys.semantic_id import (
     HierarchicalKMeansConfig,
@@ -41,11 +44,29 @@ def test_build_semantic_id_mapping_rejects_insufficient_capacity() -> None:
         )
 
 
+def test_build_semantic_id_mapping_handles_duplicate_embeddings() -> None:
+    item_ids = (1, 2, 3, 4)
+    embeddings = np.ones((4, 2), dtype=np.float64)
+
+    with warnings.catch_warnings(record=True) as caught_warnings:
+        warnings.simplefilter("always")
+        mapping = build_semantic_id_mapping(
+            item_ids,
+            embeddings,
+            HierarchicalKMeansConfig(depth=2, branching_factor=2, random_state=42, n_init=1),
+        )
+
+    assert set(mapping) == set(item_ids)
+    assert len(set(mapping.values())) == len(item_ids)
+    assert not any(issubclass(warning.category, ConvergenceWarning) for warning in caught_warnings)
+
+
 def test_build_semantic_id_codec_returns_valid_codec() -> None:
     item_embeddings = ItemEmbeddings(
         item_ids=(1, 2),
         embeddings=np.array([[0.0, 0.0], [1.0, 1.0]], dtype=np.float64),
         num_examples=2,
+        num_embedding_examples=2,
         num_context_edges=1,
     )
 

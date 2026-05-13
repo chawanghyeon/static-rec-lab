@@ -22,6 +22,7 @@ from recsys.semantic_id.embedding import (
     ItemEmbeddingConfig,
     ItemEmbeddings,
     build_item_interaction_embeddings,
+    build_item_interaction_embeddings_from_parquet,
 )
 from recsys.semantic_id.validate import SemanticIdValidationResult, validate_semantic_id_file
 
@@ -39,6 +40,7 @@ __all__ = [
     "UnknownItemIdError",
     "UnknownSemanticIdError",
     "build_item_interaction_embeddings",
+    "build_item_interaction_embeddings_from_parquet",
     "build_semantic_id_codec",
     "build_semantic_id_mapping",
     "find_duplicate_semantic_ids",
