@@ -33,8 +33,8 @@ STATIC-style sparse transition 방식의 정확성 및 지연시간 차이를 �
 
 현재 레포지토리는 데이터셋 파이프라인, 평가 지표, baseline, Semantic ID codec,
 Semantic ID 생성, naive trie constrained decoder, STATIC-style sparse transition matrix
-decoder까지 구현된 상태입니다. 다음 단계는 naive trie와 STATIC-style decoder의 latency 및
-throughput benchmark입니다.
+decoder, decoder latency 및 throughput benchmark까지 구현된 상태입니다. 다음 단계는
+FastAPI recommendation endpoint입니다.
 
 완료 기준:
 
@@ -46,6 +46,7 @@ make train-baseline
 make eval-baseline
 make build-semantic-ids
 make validate-semantic-ids
+make benchmark-decoder
 ```
 
 ## 개발 환경
@@ -253,6 +254,13 @@ decoder.allowed_next_tokens([12, 4])
 - CSR sparse transition matrix로 유효 transition 표현
 - batch prefix state update 지원
 - STATIC-style mask가 naive trie 결과와 일치하는지 테스트로 검증
+- `make benchmark-decoder`로 batch size별 latency와 throughput 리포트 생성
+
+기본 benchmark는 synthetic Semantic ID로 실행되며 결과는 다음 파일에 저장됩니다.
+
+```text
+reports/decoder_benchmark.md
+```
 
 ## 프로젝트 구조
 

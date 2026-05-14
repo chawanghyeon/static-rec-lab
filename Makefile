@@ -14,6 +14,8 @@ SEMANTIC_ID_REPORT ?= reports/semantic_id.md
 SEMANTIC_ID_DEPTH ?= 4
 SEMANTIC_ID_BRANCHING_FACTOR ?= 16
 SEMANTIC_ID_COMPONENTS ?= 32
+DECODER_BENCHMARK_REPORT ?= reports/decoder_benchmark.md
+DECODER_BENCHMARK_BATCH_SIZES ?= 1 32 128 512
 MIN_INTERACTIONS ?= 5
 MAX_HISTORY_LENGTH ?= 50
 
@@ -73,6 +75,8 @@ validate-semantic-ids:
 		--semantic-id-path $(SEMANTIC_ID_PATH)
 
 benchmark-decoder:
-	$(UV) run python scripts/benchmark_decoder.py
+	$(UV) run python scripts/benchmark_decoder.py \
+		--report-path $(DECODER_BENCHMARK_REPORT) \
+		--batch-sizes $(DECODER_BENCHMARK_BATCH_SIZES)
 
 check: lint test
