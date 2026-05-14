@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -97,6 +97,17 @@ class SemanticIdTrie:
         """state 기준으로 다음에 허용되는 token 목록을 반환한다."""
         self._validate_state(state)
         return tuple(sorted(self._nodes[state].children))
+
+    def iter_transitions(self) -> Iterator[tuple[int, int, int]]:
+        """(source_state, token, target_state) transition을 state 순서로 순회한다."""
+        for source_state, node in enumerate(self._nodes):
+            for token, target_state in sorted(node.children.items()):
+                yield source_state, token, target_state
+
+    def is_terminal_state(self, state: int) -> bool:
+        """state가 완성된 Semantic ID를 가리키는지 확인한다."""
+        self._validate_state(state)
+        return self._nodes[state].is_terminal
 
     def contains(self, semantic_id: Iterable[Any]) -> bool:
         """sequence가 완전한 Semantic ID로 삽입되어 있는지 확인한다."""

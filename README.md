@@ -32,8 +32,9 @@ STATIC-style sparse transition 방식의 정확성 및 지연시간 차이를 �
 ## 현재 단계
 
 현재 레포지토리는 데이터셋 파이프라인, 평가 지표, baseline, Semantic ID codec,
-Semantic ID 생성, naive trie constrained decoder까지 구현된 상태입니다. 다음 단계는
-STATIC-style matrix decoder입니다.
+Semantic ID 생성, naive trie constrained decoder, STATIC-style sparse transition matrix
+decoder까지 구현된 상태입니다. 다음 단계는 naive trie와 STATIC-style decoder의 latency 및
+throughput benchmark입니다.
 
 완료 기준:
 
@@ -225,15 +226,19 @@ reports/semantic_id.md
 Generative Retrieval 모델이 Semantic ID token을 생성할 때 존재하지 않는 item sequence를
 만들지 못하도록 decoder 단계에서 다음 token 후보를 제한합니다.
 
-현재 구현된 naive trie decoder는 유효한 Semantic ID sequence를 prefix tree에 삽입하고,
-입력 prefix 뒤에 올 수 있는 token만 반환합니다. 이 구현은 이후 STATIC-style matrix decoder의
-정답 기준으로 사용합니다.
+naive trie decoder는 유효한 Semantic ID sequence를 prefix tree에 삽입하고, 입력 prefix 뒤에
+올 수 있는 token만 반환합니다. STATIC-style decoder는 이 trie의 state transition을 CSR sparse
+matrix로 flatten해서 batch state update와 allowed-token mask 생성을 지원합니다.
 
 ```python
-from recsys.decoding import SemanticIdTrie
+from recsys.decoding import SemanticIdTrie, StaticTransitionMatrixDecoder
 
 trie = SemanticIdTrie([(12, 4, 81, 7), (12, 4, 82, 3)])
 trie.allowed_next_tokens([12, 4])
+# (81, 82)
+
+decoder = StaticTransitionMatrixDecoder.from_trie(trie)
+decoder.allowed_next_tokens([12, 4])
 # (81, 82)
 ```
 
@@ -244,6 +249,10 @@ trie.allowed_next_tokens([12, 4])
 - 존재하지 않는 prefix에는 빈 후보 반환
 - 길이가 다른 sequence도 trie에 저장 가능
 - state 기반 transition API 제공
+- trie node를 integer state로 flatten
+- CSR sparse transition matrix로 유효 transition 표현
+- batch prefix state update 지원
+- STATIC-style mask가 naive trie 결과와 일치하는지 테스트로 검증
 
 ## 프로젝트 구조
 
