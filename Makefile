@@ -4,6 +4,8 @@ RAW_RATINGS ?= data/raw/ml-latest-small/ratings.csv
 MOVIELENS_RAW_DIR ?= data/raw
 MOVIELENS_DATASET ?= ml-latest-small
 MOVIELENS_URL ?= https://files.grouplens.org/datasets/movielens/ml-latest-small.zip
+API_HOST ?= 0.0.0.0
+API_PORT ?= 8000
 PROCESSED_DIR ?= data/processed
 BASELINE_DIR ?= artifacts/baseline
 BASELINE_REPORT ?= reports/baseline.md
@@ -19,7 +21,7 @@ DECODER_BENCHMARK_BATCH_SIZES ?= 1 32 128 512
 MIN_INTERACTIONS ?= 5
 MAX_HISTORY_LENGTH ?= 50
 
-.PHONY: format lint test download-movielens preprocess train-baseline eval-baseline build-semantic-ids validate-semantic-ids benchmark-decoder check
+.PHONY: format lint test download-movielens preprocess train-baseline eval-baseline build-semantic-ids validate-semantic-ids benchmark-decoder serve-api check
 
 format:
 	$(UV) run ruff format $(PYTHON_TARGETS)
@@ -78,5 +80,8 @@ benchmark-decoder:
 	$(UV) run python scripts/benchmark_decoder.py \
 		--report-path $(DECODER_BENCHMARK_REPORT) \
 		--batch-sizes $(DECODER_BENCHMARK_BATCH_SIZES)
+
+serve-api:
+	$(UV) run uvicorn apps.api.main:app --host $(API_HOST) --port $(API_PORT) --reload
 
 check: lint test

@@ -33,8 +33,8 @@ STATIC-style sparse transition 방식의 정확성 및 지연시간 차이를 �
 
 현재 레포지토리는 데이터셋 파이프라인, 평가 지표, baseline, Semantic ID codec,
 Semantic ID 생성, naive trie constrained decoder, STATIC-style sparse transition matrix
-decoder, decoder latency 및 throughput benchmark까지 구현된 상태입니다. 다음 단계는
-FastAPI recommendation endpoint입니다.
+decoder, decoder latency 및 throughput benchmark, FastAPI mock recommendation endpoint까지
+구현된 상태입니다. 다음 단계는 실제 generative retrieval model 학습과 API 연동입니다.
 
 완료 기준:
 
@@ -47,6 +47,7 @@ make eval-baseline
 make build-semantic-ids
 make validate-semantic-ids
 make benchmark-decoder
+make serve-api
 ```
 
 ## 개발 환경
@@ -261,6 +262,32 @@ decoder.allowed_next_tokens([12, 4])
 ```text
 reports/decoder_benchmark.md
 ```
+
+## Recommendation API
+
+학습된 generative retrieval model이 준비되기 전에도 serving contract를 검증할 수 있도록
+deterministic mock recommender를 제공합니다. 응답 shape는 실제 모델 연동 시 유지할 API
+contract입니다.
+
+실행:
+
+```bash
+make serve-api
+```
+
+Endpoint:
+
+```http
+GET /recommendations/users/{user_id}?k=20
+```
+
+응답 필드:
+
+- `user_id`: 요청한 사용자 ID
+- `model`: 현재 추천 모델 이름
+- `decoder`: decoder 종류
+- `items`: 추천 item 목록
+- `latency_ms`: endpoint 내부 추천 생성 지연시간
 
 ## 프로젝트 구조
 

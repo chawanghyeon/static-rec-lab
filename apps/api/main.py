@@ -1,12 +1,31 @@
-"""API 진입점.
+"""FastAPI application entrypoint."""
 
-FastAPI endpoint는 Recommendation API 마일스톤에서 구현한다.
-"""
+from __future__ import annotations
+
+from fastapi import FastAPI
+
+from apps.api.routes import recommendations_router
+
+
+def create_app() -> FastAPI:
+    """FastAPI app을 생성한다."""
+    app = FastAPI(
+        title="static-rec-lab",
+        version="0.1.0",
+        description="STATIC-style generative recommendation serving API",
+    )
+    app.include_router(recommendations_router)
+    return app
+
+
+app = create_app()
 
 
 def main() -> None:
-    """현재 초기화 단계에서 사용할 placeholder 진입점."""
-    print("static-rec-lab API placeholder")
+    """로컬 API 서버를 실행한다."""
+    import uvicorn
+
+    uvicorn.run("apps.api.main:app", host="0.0.0.0", port=8000, reload=True)
 
 
 if __name__ == "__main__":
