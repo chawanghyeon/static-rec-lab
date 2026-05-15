@@ -1242,12 +1242,8 @@ dependencies = [
     { name = "pyarrow" },
     { name = "scikit-learn" },
     { name = "scipy" },
-    { name = "uvicorn", extra = ["standard"] },
-]
-
-[package.optional-dependencies]
-ml = [
     { name = "torch" },
+    { name = "uvicorn", extra = ["standard"] },
 ]
 
 [package.dev-dependencies]
@@ -1268,10 +1264,9 @@ requires-dist = [
     { name = "pyarrow", specifier = ">=16.0" },
     { name = "scikit-learn", specifier = ">=1.5" },
     { name = "scipy", specifier = ">=1.13" },
-    { name = "torch", marker = "extra == 'ml'", specifier = ">=2.3" },
+    { name = "torch", specifier = ">=2.3" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30" },
 ]
-provides-extras = ["ml"]
 
 [package.metadata.requires-dev]
 dev = [

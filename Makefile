@@ -16,12 +16,17 @@ SEMANTIC_ID_REPORT ?= reports/semantic_id.md
 SEMANTIC_ID_DEPTH ?= 4
 SEMANTIC_ID_BRANCHING_FACTOR ?= 16
 SEMANTIC_ID_COMPONENTS ?= 32
+GENERATIVE_CHECKPOINT ?= artifacts/generative/model.pt
+GENERATIVE_REPORT ?= reports/generative.md
+GENERATIVE_EPOCHS ?= 1
+GENERATIVE_BATCH_SIZE ?= 64
+GENERATIVE_LR ?= 0.001
 DECODER_BENCHMARK_REPORT ?= reports/decoder_benchmark.md
 DECODER_BENCHMARK_BATCH_SIZES ?= 1 32 128 512
 MIN_INTERACTIONS ?= 5
 MAX_HISTORY_LENGTH ?= 50
 
-.PHONY: format lint test download-movielens preprocess train-baseline eval-baseline build-semantic-ids validate-semantic-ids benchmark-decoder serve-api check
+.PHONY: format lint test download-movielens preprocess train-baseline eval-baseline build-semantic-ids validate-semantic-ids train-generative eval-generative benchmark-decoder serve-api check
 
 format:
 	$(UV) run ruff format $(PYTHON_TARGETS)
@@ -75,6 +80,25 @@ build-semantic-ids:
 validate-semantic-ids:
 	$(UV) run python scripts/validate_semantic_ids.py \
 		--semantic-id-path $(SEMANTIC_ID_PATH)
+
+train-generative:
+	$(UV) run python scripts/train_generative.py \
+		--train-parquet $(PROCESSED_DIR)/train.parquet \
+		--valid-parquet $(PROCESSED_DIR)/valid.parquet \
+		--semantic-id-path $(SEMANTIC_ID_PATH) \
+		--output-path $(GENERATIVE_CHECKPOINT) \
+		--epochs $(GENERATIVE_EPOCHS) \
+		--batch-size $(GENERATIVE_BATCH_SIZE) \
+		--learning-rate $(GENERATIVE_LR) \
+		--max-history-length $(MAX_HISTORY_LENGTH)
+
+eval-generative:
+	$(UV) run python scripts/eval_generative.py \
+		--checkpoint-path $(GENERATIVE_CHECKPOINT) \
+		--eval-parquet $(PROCESSED_DIR)/valid.parquet \
+		--semantic-id-path $(SEMANTIC_ID_PATH) \
+		--report-path $(GENERATIVE_REPORT) \
+		--batch-size $(GENERATIVE_BATCH_SIZE)
 
 benchmark-decoder:
 	$(UV) run python scripts/benchmark_decoder.py \
