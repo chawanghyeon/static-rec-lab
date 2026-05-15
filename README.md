@@ -422,6 +422,85 @@ GET /recommendations/users/{user_id}?k=20
 - `items`: 추천 item 목록
 - `latency_ms`: endpoint 내부 추천 생성 지연시간
 
+## 시스템 아키텍처
+
+전체 흐름은 데이터 전처리, Semantic ID 생성, 모델 학습, constrained decoding, serving으로
+나뉩니다.
+
+```text
+MovieLens ratings.csv
+  -> sequential recommendation split
+  -> train / valid / test parquet
+
+train.parquet
+  -> item interaction embedding
+  -> hierarchical balanced k-means
+  -> item_id <-> Semantic ID codec
+
+user history
+  -> item index sequence
+  -> Transformer encoder-decoder
+  -> Semantic ID token logits
+  -> STATIC-style constrained beam search
+  -> valid Semantic ID only
+  -> item_id recommendation
+
+FastAPI
+  -> RecommendationService
+  -> Mock service or model-backed service
+  -> /recommendations/users/{user_id}?k=20
+```
+
+모델 코드는 `recsys.models`, constrained decoding은 `recsys.decoding`, 추천 평가와 benchmark는
+`recsys.evaluation` 및 `recsys.benchmark`, API는 `apps.api`에 분리했습니다. API는 service
+interface를 통해 mock service와 model-backed service를 교체할 수 있으므로, 학습 checkpoint가
+없어도 endpoint contract를 테스트할 수 있습니다.
+
+## 설계 결정과 Trade-off
+
+Semantic ID:
+
+- item을 직접 분류하는 대신 고정 길이 Semantic ID token sequence를 생성합니다.
+- hierarchical balanced k-means를 사용해 interaction embedding 기반 token path를 만들었습니다.
+- MovieLens 32M에서는 item 수가 많아져 depth와 branching factor의 capacity가 중요합니다.
+  `ml-32m` 검증에서는 Semantic ID 길이 4, branching factor 32로 capacity를 확보했습니다.
+
+Constrained decoding:
+
+- naive trie decoder는 정답 동작을 검증하기 위한 reference implementation입니다.
+- STATIC-style decoder는 trie transition을 integer state와 sparse transition matrix로 flatten해
+  batch mask 생성을 지원합니다.
+- 현재 구현은 논문 아이디어를 추천 시스템에 맞춰 재현한 STATIC-style 구현입니다. 공식
+  `static-constraint-decoding` 구현체와의 직접 integration benchmark는 아직 포함하지 않았습니다.
+
+Generative model:
+
+- 현재 모델은 작은 Transformer encoder-decoder를 1 epoch 학습한 baseline입니다.
+- 추천 정확도는 item co-occurrence baseline보다 낮지만, constrained decoding 적용 후 invalid
+  generation rate가 0으로 유지됩니다.
+- 이 프로젝트의 핵심은 SOTA 추천 정확도가 아니라, generative retrieval에서 존재하지 않는 item
+  sequence 생성을 막고 그 latency/validity를 측정하는 것입니다.
+
+Serving benchmark:
+
+- `benchmark-serving`은 HTTP 서버를 띄우지 않고 `RecommendationService.recommend()`를 직접
+  호출합니다.
+- 따라서 측정값은 모델과 decoder 중심의 serving 비용이며, 실제 HTTP latency에는 FastAPI
+  validation, serialization, network overhead가 추가됩니다.
+
+## 한계와 다음 개선
+
+- Generative model은 작은 설정으로 1 epoch만 학습했습니다. 더 긴 학습, larger model, learning
+  rate schedule, negative sampling을 적용하면 ranking 품질을 더 확인할 수 있습니다.
+- Semantic ID는 interaction embedding 기반입니다. 영화 metadata, text embedding, collaborative
+  embedding을 결합하면 token hierarchy 품질을 개선할 수 있습니다.
+- 현재 ranking 평가는 beam search 결과만 사용합니다. score calibration, diversity constraint,
+  candidate reranking은 아직 넣지 않았습니다.
+- 공식 STATIC 구현체와 직접 비교하지 않았습니다. 현재는 naive trie 대비 자체 STATIC-style sparse
+  transition decoder의 mask 동등성과 latency만 검증했습니다.
+- serving benchmark는 service 직접 호출 기준입니다. 실제 API endpoint benchmark는 별도 HTTP
+  client 기반 측정으로 확장할 수 있습니다.
+
 ## 프로젝트 구조
 
 ```text
