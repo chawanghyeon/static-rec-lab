@@ -94,7 +94,8 @@ def test_write_decoder_benchmark_report(tmp_path: Path) -> None:
     report_path = write_decoder_benchmark_report(tmp_path / "decoder_benchmark.md", summary)
 
     report = report_path.read_text(encoding="utf-8")
-    assert "# Decoder Benchmark" in report
+    assert "# Decoder 벤치마크 리포트" in report
     assert "batch_size" in report
     assert "mask 일치" in report
+    assert "예" in report
     assert "STATIC rows/s" in report

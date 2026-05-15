@@ -32,9 +32,12 @@ STATIC-style sparse transition 방식의 정확성 및 지연시간 차이를 �
 ## 현재 단계
 
 현재 레포지토리는 데이터셋 파이프라인, 평가 지표, baseline, Semantic ID codec,
-Semantic ID 생성, naive trie constrained decoder, STATIC-style sparse transition matrix
-decoder, decoder latency 및 throughput benchmark, FastAPI mock recommendation endpoint까지
-구현된 상태입니다. 다음 단계는 실제 generative retrieval model 학습과 API 연동입니다.
+Semantic ID 생성, Generative Retrieval 학습/평가 코드, naive trie constrained decoder,
+STATIC-style sparse transition matrix decoder, decoder latency 및 throughput benchmark,
+constrained beam search, 학습 checkpoint 기반 API service와 mock service 경로까지 구현된
+상태입니다.
+다음 단계는 실제 MovieLens 학습 checkpoint를 만들고 serving 품질/지연시간 리포트를 확정하는
+것입니다.
 
 완료 기준:
 
@@ -46,6 +49,8 @@ make train-baseline
 make eval-baseline
 make build-semantic-ids
 make validate-semantic-ids
+make train-generative
+make eval-generative
 make benchmark-decoder
 make serve-api
 ```
@@ -223,6 +228,37 @@ reports/semantic_id.md
 
 대용량 검증 결과는 `reports/ml_32m_validation.md`에 정리합니다.
 
+## Generative Retrieval Model
+
+사용자 history item sequence를 입력으로 받고 target item의 Semantic ID token sequence를
+생성하는 Transformer encoder-decoder 모델을 제공합니다. 학습은 teacher forcing으로 진행하며,
+평가는 validation loss, token accuracy, sequence accuracy를 기록합니다.
+
+학습:
+
+```bash
+make train-generative
+```
+
+평가:
+
+```bash
+make eval-generative
+```
+
+생성 파일:
+
+```text
+artifacts/generative/model.pt
+reports/generative.md
+```
+
+현재 모델 구현은 학습/평가 루프, checkpoint format, STATIC-style constrained beam search
+inference까지 제공합니다. API는 checkpoint, Semantic ID, user history parquet 경로가 모두
+환경변수로 주어지면 model-backed service를 사용합니다. 세 환경변수가 모두 없을 때만
+deterministic mock service를 사용하고, 일부만 설정되었거나 파일이 없으면 명시적으로
+실패합니다.
+
 ## Constrained Decoding
 
 Generative Retrieval 모델이 Semantic ID token을 생성할 때 존재하지 않는 item sequence를
@@ -255,6 +291,7 @@ decoder.allowed_next_tokens([12, 4])
 - CSR sparse transition matrix로 유효 transition 표현
 - batch prefix state update 지원
 - STATIC-style mask가 naive trie 결과와 일치하는지 테스트로 검증
+- constrained beam search로 유효한 Semantic ID만 생성
 - `make benchmark-decoder`로 batch size별 latency와 throughput 리포트 생성
 
 기본 benchmark는 synthetic Semantic ID로 실행되며 결과는 다음 파일에 저장됩니다.
@@ -265,13 +302,22 @@ reports/decoder_benchmark.md
 
 ## Recommendation API
 
-학습된 generative retrieval model이 준비되기 전에도 serving contract를 검증할 수 있도록
-deterministic mock recommender를 제공합니다. 응답 shape는 실제 모델 연동 시 유지할 API
-contract입니다.
+학습된 generative retrieval model이 준비되기 전에는 deterministic mock recommender로 serving
+contract를 검증합니다. 아래 환경변수를 모두 설정하면 checkpoint 기반 generative retrieval
+service가 대신 사용됩니다.
 
 실행:
 
 ```bash
+make serve-api
+```
+
+Model-backed 실행 환경변수:
+
+```bash
+STATIC_REC_GENERATIVE_CHECKPOINT=artifacts/generative/model.pt \
+STATIC_REC_SEMANTIC_ID_PATH=artifacts/semantic_id/semantic_ids.json \
+STATIC_REC_USER_HISTORY_PARQUET=data/processed/valid.parquet \
 make serve-api
 ```
 

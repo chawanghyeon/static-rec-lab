@@ -200,11 +200,11 @@ def write_decoder_benchmark_report(
     path: str | Path,
     summary: DecoderBenchmarkSummary,
 ) -> Path:
-    """Decoder benchmark 결과를 markdown report로 저장한다."""
+    """Decoder benchmark 결과를 한국어 markdown report로 저장한다."""
     output_path = Path(path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     lines = [
-        "# Decoder Benchmark",
+        "# Decoder 벤치마크 리포트",
         "",
         "naive trie decoder와 STATIC-style sparse transition matrix decoder의 "
         "allowed-token mask 생성 성능을 비교합니다.",
@@ -228,7 +228,7 @@ def write_decoder_benchmark_report(
     ]
     for result in summary.results:
         lines.append(
-            f"| {result.batch_size:,} | {'yes' if result.masks_identical else 'no'} | "
+            f"| {result.batch_size:,} | {'예' if result.masks_identical else '아니오'} | "
             f"{result.naive_latency_ms:.4f} | {result.static_latency_ms:.4f} | "
             f"{result.naive_throughput_rows_per_s:,.2f} | "
             f"{result.static_throughput_rows_per_s:,.2f} | {result.speedup:.2f}x |"
