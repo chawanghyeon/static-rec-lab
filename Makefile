@@ -18,15 +18,17 @@ SEMANTIC_ID_BRANCHING_FACTOR ?= 16
 SEMANTIC_ID_COMPONENTS ?= 32
 GENERATIVE_CHECKPOINT ?= artifacts/generative/model.pt
 GENERATIVE_REPORT ?= reports/generative.md
+GENERATIVE_RANKING_REPORT ?= reports/generative_eval.md
 GENERATIVE_EPOCHS ?= 1
 GENERATIVE_BATCH_SIZE ?= 64
 GENERATIVE_LR ?= 0.001
+GENERATIVE_BEAM_SIZE ?= 50
 DECODER_BENCHMARK_REPORT ?= reports/decoder_benchmark.md
 DECODER_BENCHMARK_BATCH_SIZES ?= 1 32 128 512
 MIN_INTERACTIONS ?= 5
 MAX_HISTORY_LENGTH ?= 50
 
-.PHONY: format lint test download-movielens preprocess train-baseline eval-baseline build-semantic-ids validate-semantic-ids train-generative eval-generative benchmark-decoder serve-api check
+.PHONY: format lint test download-movielens preprocess train-baseline eval-baseline build-semantic-ids validate-semantic-ids train-generative eval-generative eval-generative-ranking benchmark-decoder serve-api check
 
 format:
 	$(UV) run ruff format $(PYTHON_TARGETS)
@@ -99,6 +101,15 @@ eval-generative:
 		--semantic-id-path $(SEMANTIC_ID_PATH) \
 		--report-path $(GENERATIVE_REPORT) \
 		--batch-size $(GENERATIVE_BATCH_SIZE)
+
+eval-generative-ranking:
+	$(UV) run python scripts/eval_generative_ranking.py \
+		--checkpoint-path $(GENERATIVE_CHECKPOINT) \
+		--semantic-id-path $(SEMANTIC_ID_PATH) \
+		--valid-parquet $(PROCESSED_DIR)/valid.parquet \
+		--test-parquet $(PROCESSED_DIR)/test.parquet \
+		--report-path $(GENERATIVE_RANKING_REPORT) \
+		--beam-size $(GENERATIVE_BEAM_SIZE)
 
 benchmark-decoder:
 	$(UV) run python scripts/benchmark_decoder.py \

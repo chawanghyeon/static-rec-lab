@@ -51,6 +51,7 @@ make build-semantic-ids
 make validate-semantic-ids
 make train-generative
 make eval-generative
+make eval-generative-ranking
 make benchmark-decoder
 make serve-api
 ```
@@ -246,11 +247,18 @@ make train-generative
 make eval-generative
 ```
 
+추천 ranking 평가:
+
+```bash
+make eval-generative-ranking
+```
+
 생성 파일:
 
 ```text
 artifacts/generative/model.pt
 reports/generative.md
+reports/generative_eval.md
 ```
 
 현재 모델 구현은 학습/평가 루프, checkpoint format, STATIC-style constrained beam search
@@ -258,6 +266,11 @@ inference까지 제공합니다. API는 checkpoint, Semantic ID, user history pa
 환경변수로 주어지면 model-backed service를 사용합니다. 세 환경변수가 모두 없을 때만
 deterministic mock service를 사용하고, 일부만 설정되었거나 파일이 없으면 명시적으로
 실패합니다.
+
+`make eval-generative`는 teacher-forcing 기준의 validation loss, token accuracy,
+sequence accuracy를 측정합니다. `make eval-generative-ranking`은 실제 constrained beam
+search로 추천 item ranking을 만든 뒤 baseline과 같은 Recall@K, NDCG@K, MRR@K 및 invalid
+generation rate를 측정합니다.
 
 ## Constrained Decoding
 
