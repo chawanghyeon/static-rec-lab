@@ -36,8 +36,8 @@ Semantic ID 생성, Generative Retrieval 학습/평가 코드, naive trie constr
 STATIC-style sparse transition matrix decoder, decoder latency 및 throughput benchmark,
 constrained beam search, 학습 checkpoint 기반 API service와 mock service 경로까지 구현된
 상태입니다.
-다음 단계는 실제 MovieLens 학습 checkpoint를 만들고 serving 품질/지연시간 리포트를 확정하는
-것입니다.
+MovieLens Latest Small 기준 generative checkpoint를 학습하고, 추천 ranking 평가와
+model-backed serving latency benchmark까지 리포트로 남긴 상태입니다.
 
 완료 기준:
 
@@ -56,6 +56,52 @@ make benchmark-decoder
 make benchmark-serving
 make serve-api
 ```
+
+## 실험 결과 요약
+
+MovieLens Latest Small 전처리 결과와 Semantic ID artifact를 사용해 Generative Retrieval
+모델을 1 epoch 학습했습니다. checkpoint 파일은 로컬 산출물로만 사용하며 Git에는 커밋하지
+않습니다.
+
+Teacher-forcing 평가:
+
+| split | examples | loss | token accuracy | sequence accuracy |
+| --- | ---: | ---: | ---: | ---: |
+| valid | 590 | 1.976591 | 0.356356 | 0.006780 |
+
+추천 ranking 평가:
+
+| model | split | Recall@10 | Recall@20 | NDCG@10 | NDCG@20 | MRR@20 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| Popularity | test | 0.029508 | 0.055738 | 0.013207 | 0.019912 | 0.010147 |
+| Item co-occurrence | test | 0.060656 | 0.098361 | 0.031351 | 0.040789 | 0.025138 |
+| Generative Retrieval + STATIC | test | 0.037705 | 0.072131 | 0.016930 | 0.025476 | 0.012989 |
+
+생성 품질:
+
+- valid invalid generation rate: `0.000000`
+- test invalid generation rate: `0.000000`
+- test unknown targets: `24`
+
+Decoder benchmark:
+
+- batch size 512 기준 STATIC-style mask 생성은 naive trie 대비 `3.36x` 빠릅니다.
+- 모든 sampled state batch에서 naive trie와 STATIC-style decoder mask 일치를 확인했습니다.
+
+Serving benchmark:
+
+- model-backed service 기준 `k=20`, user_id `1..610`, batch size `1, 8, 32`를 측정했습니다.
+- batch size 32 기준 평균 latency는 `13.5059 ms`, p95 latency는 `14.9834 ms`,
+  throughput은 `74.04 req/s`입니다.
+
+해석:
+
+- 현재 generative model은 1 epoch의 작은 Transformer baseline이므로 item co-occurrence
+  baseline보다 추천 정확도는 낮습니다.
+- 대신 constrained decoding 적용 후 invalid generation rate가 0으로 유지되어, 존재하지 않는
+  item Semantic ID를 추천하지 않는다는 핵심 목표를 만족합니다.
+- portfolio 관점에서 핵심 비교 대상은 추천 정확도 1등이 아니라, baseline 추천 성능과
+  constrained decoding latency/validity를 함께 제시하는 것입니다.
 
 ## 개발 환경
 

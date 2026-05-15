@@ -6,23 +6,23 @@ FastAPI 직렬화, validation, network overhead를 제외한 모델 및 decoder 
 
 ## 설정
 
-- 서비스 소스: `mock`
-- model: `mock-generative-retrieval-static`
+- 서비스 소스: `environment`
+- model: `generative-retrieval-static`
 - decoder: `static_sparse_matrix`
 - k: 20
-- batch sizes: 1, 32, 128
-- warmup iterations: 3
-- measured iterations: 10
+- batch sizes: 1, 8, 32
+- warmup iterations: 1
+- measured iterations: 3
 - random seed: 42
-- user_id range: 1..10000
+- user_id range: 1..610
 
 ## 결과
 
 | batch_size | 요청 수 | 평균 latency ms | p50 latency ms | p95 latency ms | 최대 latency ms | throughput req/s |
 |---:|---:|---:|---:|---:|---:|---:|
-| 1 | 10 | 0.1771 | 0.1721 | 0.1968 | 0.2052 | 5,619.95 |
-| 32 | 320 | 0.1745 | 0.1706 | 0.1938 | 0.2136 | 5,724.76 |
-| 128 | 1,280 | 0.1754 | 0.1708 | 0.1977 | 0.3058 | 5,694.94 |
+| 1 | 3 | 13.6479 | 13.7175 | 13.9666 | 13.9943 | 73.26 |
+| 8 | 24 | 13.7883 | 13.7450 | 14.5645 | 14.7064 | 72.52 |
+| 32 | 96 | 13.5059 | 13.6805 | 14.9834 | 16.0165 | 74.04 |
 
 ## 해석
 
