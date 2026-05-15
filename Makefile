@@ -25,10 +25,13 @@ GENERATIVE_LR ?= 0.001
 GENERATIVE_BEAM_SIZE ?= 50
 DECODER_BENCHMARK_REPORT ?= reports/decoder_benchmark.md
 DECODER_BENCHMARK_BATCH_SIZES ?= 1 32 128 512
+SERVING_BENCHMARK_REPORT ?= reports/serving_benchmark.md
+SERVING_BENCHMARK_BATCH_SIZES ?= 1 32 128
+SERVING_BENCHMARK_SERVICE ?= mock
 MIN_INTERACTIONS ?= 5
 MAX_HISTORY_LENGTH ?= 50
 
-.PHONY: format lint test download-movielens preprocess train-baseline eval-baseline build-semantic-ids validate-semantic-ids train-generative eval-generative eval-generative-ranking benchmark-decoder serve-api check
+.PHONY: format lint test download-movielens preprocess train-baseline eval-baseline build-semantic-ids validate-semantic-ids train-generative eval-generative eval-generative-ranking benchmark-decoder benchmark-serving serve-api check
 
 format:
 	$(UV) run ruff format $(PYTHON_TARGETS)
@@ -115,6 +118,12 @@ benchmark-decoder:
 	$(UV) run python scripts/benchmark_decoder.py \
 		--report-path $(DECODER_BENCHMARK_REPORT) \
 		--batch-sizes $(DECODER_BENCHMARK_BATCH_SIZES)
+
+benchmark-serving:
+	$(UV) run python scripts/benchmark_serving.py \
+		--service $(SERVING_BENCHMARK_SERVICE) \
+		--report-path $(SERVING_BENCHMARK_REPORT) \
+		--batch-sizes $(SERVING_BENCHMARK_BATCH_SIZES)
 
 serve-api:
 	$(UV) run uvicorn apps.api.main:app --host $(API_HOST) --port $(API_PORT) --reload

@@ -9,3 +9,4 @@
 - `generative_eval.md`: Generative Retrieval 추천 ranking 평가
 - `ml_32m_validation.md`: MovieLens 32M 대용량 smoke/performance 검증
 - `decoder_benchmark.md`: naive trie와 STATIC-style decoder 비교
+- `serving_benchmark.md`: recommendation service latency 벤치마크

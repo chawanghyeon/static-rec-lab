@@ -53,6 +53,7 @@ make train-generative
 make eval-generative
 make eval-generative-ranking
 make benchmark-decoder
+make benchmark-serving
 make serve-api
 ```
 
@@ -311,6 +312,33 @@ decoder.allowed_next_tokens([12, 4])
 
 ```text
 reports/decoder_benchmark.md
+```
+
+## Serving 벤치마크
+
+Recommendation API의 service layer를 직접 호출해 사용자별 추천 생성 latency를 측정합니다.
+HTTP 서버를 띄우지 않기 때문에 FastAPI 직렬화, validation, network overhead를 제외한 모델 및
+decoder 비용을 볼 수 있습니다.
+
+```bash
+make benchmark-serving
+```
+
+model-backed service를 측정하려면 API 실행과 같은 `STATIC_REC_*` 환경변수를 설정하고
+`SERVING_BENCHMARK_SERVICE=environment`로 실행합니다.
+
+```bash
+STATIC_REC_GENERATIVE_CHECKPOINT=artifacts/generative/model.pt \
+STATIC_REC_SEMANTIC_ID_PATH=artifacts/semantic_id/semantic_ids.json \
+STATIC_REC_USER_HISTORY_PARQUET=data/processed/valid.parquet \
+SERVING_BENCHMARK_SERVICE=environment \
+make benchmark-serving
+```
+
+생성 파일:
+
+```text
+reports/serving_benchmark.md
 ```
 
 ## Recommendation API
