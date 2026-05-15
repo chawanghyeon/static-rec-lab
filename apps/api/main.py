@@ -5,14 +5,23 @@ from __future__ import annotations
 from fastapi import FastAPI
 
 from apps.api.routes import recommendations_router
+from apps.api.services import (
+    RecommendationService,
+    build_recommendation_service_from_environment,
+)
 
 
-def create_app() -> FastAPI:
+def create_app(recommendation_service: RecommendationService | None = None) -> FastAPI:
     """FastAPI app을 생성한다."""
     app = FastAPI(
         title="static-rec-lab",
         version="0.1.0",
         description="STATIC-style generative recommendation serving API",
+    )
+    app.state.recommendation_service = (
+        build_recommendation_service_from_environment()
+        if recommendation_service is None
+        else recommendation_service
     )
     app.include_router(recommendations_router)
     return app

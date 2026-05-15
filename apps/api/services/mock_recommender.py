@@ -5,15 +5,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 
-
-@dataclass(frozen=True)
-class RecommendedItem:
-    """추천 결과 item."""
-
-    item_id: int
-    title: str
-    semantic_id: tuple[int, ...]
-    score: float
+from apps.api.services.base import RecommendedItem
 
 
 @dataclass(frozen=True)
