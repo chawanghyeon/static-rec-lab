@@ -19,7 +19,7 @@ class MockRecommendationService:
     """실제 generative retrieval model 전까지 API contract를 검증하는 mock service."""
 
     model_name = "mock-generative-retrieval-static"
-    decoder_name = "static_sparse_matrix"
+    decoder_name = "mock_static_decoding"
 
     def __init__(self, catalog: tuple[_CatalogItem, ...] | None = None) -> None:
         self._catalog = _build_default_catalog() if catalog is None else catalog

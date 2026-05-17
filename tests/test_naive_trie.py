@@ -1,6 +1,6 @@
 import pytest
 
-from recsys.decoding import SemanticIdTrie
+from recsys.decoding.naive_trie import SemanticIdTrie
 from recsys.semantic_id import SemanticIdCodec
 
 

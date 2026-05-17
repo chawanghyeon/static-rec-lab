@@ -29,6 +29,7 @@ def build_recommendation_service_from_environment() -> RecommendationService:
     checkpoint_path = os.getenv("STATIC_REC_GENERATIVE_CHECKPOINT")
     semantic_id_path = os.getenv("STATIC_REC_SEMANTIC_ID_PATH")
     user_history_path = os.getenv("STATIC_REC_USER_HISTORY_PARQUET")
+    static_decoding_index_path = os.getenv("STATIC_REC_STATIC_DECODING_INDEX_PATH")
     configured_values = {
         "STATIC_REC_GENERATIVE_CHECKPOINT": checkpoint_path,
         "STATIC_REC_SEMANTIC_ID_PATH": semantic_id_path,
@@ -44,6 +45,14 @@ def build_recommendation_service_from_environment() -> RecommendationService:
 
     paths = {name: Path(value) for name, value in provided_values.items() if value is not None}
     missing_paths = {name: path for name, path in paths.items() if not path.exists()}
+    if static_decoding_index_path:
+        optional_static_decoding_index_path = Path(static_decoding_index_path)
+        if not optional_static_decoding_index_path.exists():
+            missing_paths["STATIC_REC_STATIC_DECODING_INDEX_PATH"] = (
+                optional_static_decoding_index_path
+            )
+    else:
+        optional_static_decoding_index_path = None
     if missing_paths:
         formatted = {name: str(path) for name, path in missing_paths.items()}
         msg = f"model-backed API 설정 파일을 찾을 수 없습니다: {formatted}"
@@ -56,5 +65,6 @@ def build_recommendation_service_from_environment() -> RecommendationService:
             user_history_path=paths["STATIC_REC_USER_HISTORY_PARQUET"],
             device=os.getenv("STATIC_REC_DEVICE", "cpu"),
             beam_size=int(os.getenv("STATIC_REC_BEAM_SIZE", "50")),
+            static_decoding_index_path=optional_static_decoding_index_path,
         )
     )

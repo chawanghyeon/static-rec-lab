@@ -63,6 +63,22 @@ def test_run_decoder_benchmark_supports_configured_batch_sizes() -> None:
         assert result.static_latency_ms >= 0
         assert result.naive_throughput_rows_per_s > 0
         assert result.static_throughput_rows_per_s > 0
+    for static_decoding_result in summary.static_decoding_kernel_results:
+        assert static_decoding_result.candidates_identical is True
+        assert static_decoding_result.static_decoding_latency_ms >= 0
+        assert static_decoding_result.static_decoding_throughput_rows_per_s > 0
+    for harness_result in summary.static_decoding_harness_results:
+        assert harness_result.sequences_valid is True
+        assert harness_result.static_decoding_harness_latency_ms >= 0
+        assert harness_result.static_decoding_harness_throughput_rows_per_s > 0
+    for jax_result in summary.static_decoding_jax_kernel_results:
+        assert jax_result.candidates_identical is True
+        assert jax_result.static_decoding_jax_latency_ms >= 0
+        assert jax_result.static_decoding_jax_throughput_rows_per_s > 0
+    for jax_harness_result in summary.static_decoding_jax_harness_results:
+        assert jax_harness_result.sequences_valid is True
+        assert jax_harness_result.static_decoding_jax_harness_latency_ms >= 0
+        assert jax_harness_result.static_decoding_jax_harness_throughput_rows_per_s > 0
 
 
 def test_run_decoder_benchmark_rejects_invalid_config() -> None:
@@ -98,4 +114,8 @@ def test_write_decoder_benchmark_report(tmp_path: Path) -> None:
     assert "batch_size" in report
     assert "mask 일치" in report
     assert "예" in report
-    assert "STATIC rows/s" in report
+    assert "matrix rows/s" in report
+    assert "static_decoding PyTorch kernel" in report
+    assert "static_decoding sparse_transition_torch harness" in report
+    assert "static_decoding JAX kernel" in report
+    assert "static_decoding sparse_transition_jax harness" in report

@@ -13,6 +13,13 @@ ITEM_KNN_MAX_CANDIDATES ?= 200
 ITEM_KNN_MAX_HISTORY_ITEMS ?= 50
 SEMANTIC_ID_PATH ?= artifacts/semantic_id/semantic_ids.json
 SEMANTIC_ID_REPORT ?= reports/semantic_id.md
+STATIC_DECODING_INDEX_PATH ?= artifacts/semantic_id/static_decoding_index.npz
+STATIC_DECODING_DENSE_LOOKUP_LAYERS ?= auto
+ifneq ($(wildcard $(STATIC_DECODING_INDEX_PATH)),)
+STATIC_DECODING_INDEX_CLI_ARG := --static-decoding-index-path $(STATIC_DECODING_INDEX_PATH)
+else
+STATIC_DECODING_INDEX_CLI_ARG :=
+endif
 SEMANTIC_ID_DEPTH ?= 4
 SEMANTIC_ID_BRANCHING_FACTOR ?= 16
 SEMANTIC_ID_COMPONENTS ?= 32
@@ -31,7 +38,7 @@ SERVING_BENCHMARK_SERVICE ?= mock
 MIN_INTERACTIONS ?= 5
 MAX_HISTORY_LENGTH ?= 50
 
-.PHONY: format lint test download-movielens preprocess train-baseline eval-baseline build-semantic-ids validate-semantic-ids train-generative eval-generative eval-generative-ranking benchmark-decoder benchmark-serving serve-api check
+.PHONY: format lint test download-movielens preprocess train-baseline eval-baseline build-semantic-ids validate-semantic-ids build-static-decoding-index train-generative eval-generative eval-generative-ranking benchmark-decoder benchmark-serving serve-api check
 
 format:
 	$(UV) run ruff format $(PYTHON_TARGETS)
@@ -86,6 +93,12 @@ validate-semantic-ids:
 	$(UV) run python scripts/validate_semantic_ids.py \
 		--semantic-id-path $(SEMANTIC_ID_PATH)
 
+build-static-decoding-index:
+	$(UV) run python scripts/build_static_decoding_index.py \
+		--semantic-id-path $(SEMANTIC_ID_PATH) \
+		--output-path $(STATIC_DECODING_INDEX_PATH) \
+		--dense-lookup-layers $(STATIC_DECODING_DENSE_LOOKUP_LAYERS)
+
 train-generative:
 	$(UV) run python scripts/train_generative.py \
 		--train-parquet $(PROCESSED_DIR)/train.parquet \
@@ -112,7 +125,8 @@ eval-generative-ranking:
 		--valid-parquet $(PROCESSED_DIR)/valid.parquet \
 		--test-parquet $(PROCESSED_DIR)/test.parquet \
 		--report-path $(GENERATIVE_RANKING_REPORT) \
-		--beam-size $(GENERATIVE_BEAM_SIZE)
+		--beam-size $(GENERATIVE_BEAM_SIZE) \
+		$(STATIC_DECODING_INDEX_CLI_ARG)
 
 benchmark-decoder:
 	$(UV) run python scripts/benchmark_decoder.py \

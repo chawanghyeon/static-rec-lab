@@ -16,7 +16,7 @@ def create_app(recommendation_service: RecommendationService | None = None) -> F
     app = FastAPI(
         title="static-rec-lab",
         version="0.1.0",
-        description="STATIC-style generative recommendation serving API",
+        description="static_decoding 기반 generative recommendation serving API",
     )
     app.state.recommendation_service = (
         build_recommendation_service_from_environment()

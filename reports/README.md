@@ -9,5 +9,9 @@
 - `generative.md`: Generative Retrieval teacher-forcing 평가
 - `generative_eval.md`: Generative Retrieval 추천 ranking 평가
 - `ml_32m_validation.md`: MovieLens 32M 대용량 smoke/performance 검증
-- `decoder_benchmark.md`: naive trie와 STATIC-style decoder 비교
+- `decoder_benchmark.md`: STATIC decoder와 검증용 decoder latency/validity 벤치마크
 - `serving_benchmark.md`: recommendation service latency 벤치마크
+- [static_decoding_integration.md](static_decoding_integration.md): `static_decoding` package 통합 방식
+
+static_decoding index artifact는 `make build-static-decoding-index`로
+`artifacts/semantic_id/static_decoding_index.npz`에 생성합니다.

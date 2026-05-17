@@ -1,7 +1,8 @@
 import numpy as np
 import pytest
 
-from recsys.decoding import StaticTransitionMatrixDecoder, constrained_beam_search
+from recsys.decoding.beam_search import constrained_beam_search
+from recsys.decoding.static_matrix import StaticTransitionMatrixDecoder
 
 
 def test_constrained_beam_search_only_returns_valid_semantic_ids() -> None:

@@ -3,7 +3,8 @@ from typing import Any
 import numpy as np
 import pytest
 
-from recsys.decoding import INVALID_STATE, SemanticIdTrie, StaticTransitionMatrixDecoder
+from recsys.decoding.naive_trie import SemanticIdTrie
+from recsys.decoding.static_matrix import INVALID_STATE, StaticTransitionMatrixDecoder
 from recsys.semantic_id import SemanticIdCodec
 
 

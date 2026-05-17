@@ -9,6 +9,7 @@ import pandas as pd
 import torch
 
 from recsys.evaluation import (
+    STATIC_DECODING_DECODER_NAME,
     GenerativeRankingEvaluation,
     evaluate_generative_ranking,
     write_generative_ranking_report,
@@ -41,6 +42,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--cutoffs", type=int, nargs="+", default=[10, 20])
     parser.add_argument("--beam-size", type=int, default=50)
+    parser.add_argument(
+        "--static-decoding-index-path",
+        type=Path,
+        default=None,
+        help="static_decoding index npz artifact 경로",
+    )
     parser.add_argument("--max-valid-examples", type=int, default=None)
     parser.add_argument("--max-test-examples", type=int, default=None)
     parser.add_argument("--device", choices=["auto", "cpu", "cuda", "mps"], default="auto")
@@ -68,6 +75,7 @@ def main() -> None:
             cutoffs=args.cutoffs,
             beam_size=args.beam_size,
             device=device,
+            static_decoding_index_path=args.static_decoding_index_path,
         ),
         evaluate_generative_ranking(
             model=model,
@@ -78,6 +86,7 @@ def main() -> None:
             cutoffs=args.cutoffs,
             beam_size=args.beam_size,
             device=device,
+            static_decoding_index_path=args.static_decoding_index_path,
         ),
     ]
     report_path = write_generative_ranking_report(
@@ -87,6 +96,8 @@ def main() -> None:
         semantic_id_path=args.semantic_id_path,
         beam_size=args.beam_size,
         cutoffs=args.cutoffs,
+        decoder_name=STATIC_DECODING_DECODER_NAME,
+        static_decoding_index_path=args.static_decoding_index_path,
     )
 
     print("Generative Retrieval 추천 ranking 평가 완료")

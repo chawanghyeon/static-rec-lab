@@ -6,7 +6,8 @@ import pandas as pd
 import torch
 from torch.utils.data import DataLoader
 
-from recsys.decoding import StaticTransitionMatrixDecoder
+from recsys.decoding import StaticDecodingIndex
+from recsys.decoding.static_matrix import StaticTransitionMatrixDecoder
 from recsys.models import (
     BOS_TOKEN_ID,
     GenerativeBatch,
@@ -15,11 +16,12 @@ from recsys.models import (
     build_generative_dataset,
     collate_generative_examples,
     evaluate_model,
-    generate_semantic_ids,
+    generate_semantic_ids_with_static_decoding,
     load_checkpoint,
     save_checkpoint,
     train_one_epoch,
 )
+from recsys.models.inference import generate_semantic_ids
 from recsys.semantic_id import SemanticIdCodec
 
 
@@ -115,6 +117,34 @@ def test_generate_semantic_ids_returns_valid_constrained_results() -> None:
     assert 1 <= len(results) <= 2
     for result in results:
         assert codec.has_semantic_id(result.semantic_id)
+        assert 0 <= result.score <= 1
+
+
+def test_generate_semantic_ids_with_static_decoding_returns_valid_results() -> None:
+    torch.manual_seed(7)
+    codec = _sample_codec()
+    bundle = build_generative_dataset(_sample_frame(), codec)
+    model = _tiny_model(bundle.item_vocab_size, bundle.semantic_vocab_size)
+    index = StaticDecodingIndex.from_codec(
+        codec,
+        vocab_size=bundle.semantic_vocab_size,
+        dense_lookup_layers=2,
+    )
+
+    results = generate_semantic_ids_with_static_decoding(
+        model=model,
+        index=index,
+        history_item_ids=[10, 20],
+        item_to_index=bundle.item_to_index,
+        beam_size=3,
+        max_results=2,
+        device=torch.device("cpu"),
+    )
+
+    assert 1 <= len(results) <= 2
+    for result in results:
+        assert codec.has_semantic_id(result.semantic_id)
+        assert index.contains(result.semantic_id)
         assert 0 <= result.score <= 1
 
 

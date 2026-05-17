@@ -11,10 +11,19 @@ from typing import Any, cast
 import pandas as pd
 import torch
 
-from recsys.decoding import StaticTransitionMatrixDecoder
+from recsys.decoding import (
+    StaticDecodingIndex,
+    StaticDecodingTorchIndex,
+    validate_static_decoding_index_matches_codec,
+)
 from recsys.evaluation.metrics import RankingMetrics, evaluate_ranking_at_k
-from recsys.models import GenerativeRetriever, generate_semantic_ids
+from recsys.models import (
+    GenerativeRetriever,
+    generate_semantic_ids_with_static_decoding,
+)
 from recsys.semantic_id import SemanticIdCodec, UnknownSemanticIdError
+
+STATIC_DECODING_DECODER_NAME = "static_decoding_pt"
 
 
 @dataclass(frozen=True)
@@ -61,6 +70,7 @@ def evaluate_generative_ranking(
     cutoffs: Sequence[int],
     beam_size: int,
     device: torch.device,
+    static_decoding_index_path: str | Path | None = None,
 ) -> GenerativeRankingEvaluation:
     """Generative model + STATIC decoder를 baseline과 같은 ranking metric으로 평가한다."""
     _validate_eval_frame(eval_frame)
@@ -71,7 +81,11 @@ def evaluate_generative_ranking(
 
     max_k = max(cutoffs)
     effective_beam_size = max(beam_size, max_k)
-    decoder = StaticTransitionMatrixDecoder.from_codec(codec)
+    decoder = build_static_decoding_index(
+        codec=codec,
+        static_decoding_index_path=static_decoding_index_path,
+    )
+    static_decoding_torch_index = decoder.to_torch(device)
     recommendations: list[tuple[int, ...]] = []
     relevant_items: list[tuple[int]] = []
     unknown_target_examples = 0
@@ -96,6 +110,7 @@ def evaluate_generative_ranking(
             k=max_k,
             beam_size=effective_beam_size,
             device=device,
+            static_decoding_torch_index=static_decoding_torch_index,
         )
         recommendations.append(result.item_ids)
         relevant_items.append((target_item_id,))
@@ -128,13 +143,14 @@ def evaluate_generative_ranking(
 def recommend_with_constrained_generation(
     *,
     model: GenerativeRetriever,
-    decoder: StaticTransitionMatrixDecoder,
+    decoder: StaticDecodingIndex,
     codec: SemanticIdCodec,
     history_item_ids: Sequence[int],
     item_to_index: Mapping[int, int],
     k: int,
     beam_size: int,
     device: torch.device,
+    static_decoding_torch_index: StaticDecodingTorchIndex | None = None,
 ) -> GenerativeRecommendationResult:
     """STATIC constrained beam search 결과를 item ranking으로 변환한다."""
     if k < 1:
@@ -144,9 +160,10 @@ def recommend_with_constrained_generation(
         msg = "beam_size는 1 이상이어야 합니다."
         raise ValueError(msg)
 
-    beam_results = generate_semantic_ids(
+    beam_results = generate_semantic_ids_with_static_decoding(
         model=model,
-        decoder=decoder,
+        index=decoder,
+        torch_index=static_decoding_torch_index,
         history_item_ids=history_item_ids,
         item_to_index=item_to_index,
         beam_size=max(beam_size, k),
@@ -196,6 +213,8 @@ def write_generative_ranking_report(
     semantic_id_path: str | Path,
     beam_size: int,
     cutoffs: Sequence[int],
+    decoder_name: str = STATIC_DECODING_DECODER_NAME,
+    static_decoding_index_path: str | Path | None = None,
 ) -> Path:
     """Generative Retrieval ranking 평가 결과를 한국어 markdown 리포트로 저장한다."""
     path = Path(report_path)
@@ -207,7 +226,12 @@ def write_generative_ranking_report(
         "",
         f"- checkpoint: `{checkpoint_path}`",
         f"- Semantic ID artifact: `{semantic_id_path}`",
-        "- decoder: STATIC-style sparse transition matrix",
+        f"- decoder: `{decoder_name}`",
+        *(
+            [f"- STATIC index artifact: `{static_decoding_index_path}`"]
+            if static_decoding_index_path is not None
+            else []
+        ),
         f"- beam size: {beam_size}",
         f"- 평가 cutoff: {', '.join(str(cutoff) for cutoff in cutoffs)}",
         "- 추천 ranking 생성 후 사용자 history에 이미 포함된 item은 제외합니다.",
@@ -250,8 +274,8 @@ def write_generative_ranking_report(
             "## 해석",
             "",
             "이 평가는 teacher-forcing token accuracy가 아니라 실제 추천 ranking 품질을 봅니다.",
-            "모델 logits에 STATIC-style constrained decoding mask를 적용해 존재하는 Semantic ID만 "
-            "생성한 뒤 item_id로 복원하고, baseline과 같은 Recall/NDCG/MRR 기준으로 비교합니다.",
+            "모델 logits에 선택한 constrained decoder를 적용해 존재하는 Semantic ID만 생성한 뒤 "
+            "item_id로 복원하고, baseline과 같은 Recall/NDCG/MRR 기준으로 비교합니다.",
             "unknown target은 Semantic ID catalog에 없는 cold-start target이므로 추천 가능 "
             "후보에는 없지만, 평가 denominator에는 남겨 실제 추천 실패로 반영합니다.",
             "",
@@ -259,6 +283,34 @@ def write_generative_ranking_report(
     )
     path.write_text("\n".join(lines), encoding="utf-8")
     return path
+
+
+def build_static_decoding_index(
+    *,
+    codec: SemanticIdCodec,
+    static_decoding_index_path: str | Path | None = None,
+) -> StaticDecodingIndex:
+    """평가에서 사용할 static_decoding index를 로드하거나 생성한다."""
+    if static_decoding_index_path is None:
+        return StaticDecodingIndex.from_codec(
+            codec,
+            dense_lookup_layers=_static_decoding_dense_lookup_layers(codec),
+        )
+    index = StaticDecodingIndex.load_npz(static_decoding_index_path)
+    validate_static_decoding_index_matches_codec(index=index, codec=codec)
+    return index
+
+
+def _static_decoding_dense_lookup_layers(codec: SemanticIdCodec) -> int:
+    depths = {len(semantic_id) for semantic_id in codec.item_to_semantic_id.values()}
+    if len(depths) != 1:
+        msg = f"모든 Semantic ID 길이가 같아야 합니다: {sorted(depths)}"
+        raise ValueError(msg)
+    depth = next(iter(depths), 0)
+    if depth < 2:
+        msg = "static_decoding build_static_index는 길이 2 이상의 Semantic ID가 필요합니다."
+        raise ValueError(msg)
+    return min(2, depth - 1)
 
 
 def _validate_eval_frame(eval_frame: pd.DataFrame) -> None:

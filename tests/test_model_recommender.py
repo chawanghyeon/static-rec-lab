@@ -3,6 +3,7 @@ from pathlib import Path
 import pandas as pd
 
 from apps.api.services import ModelRecommendationConfig, ModelRecommendationService
+from recsys.decoding import StaticDecodingIndex
 from recsys.models import (
     GenerativeRetriever,
     GenerativeRetrieverConfig,
@@ -15,6 +16,10 @@ from recsys.semantic_id import SemanticIdCodec
 def test_model_recommendation_service_returns_constrained_items(tmp_path: Path) -> None:
     codec = SemanticIdCodec({20: [0, 1], 30: [1, 2], 40: [2, 3]})
     semantic_id_path = codec.save_json(tmp_path / "semantic_ids.json")
+    static_decoding_index_path = StaticDecodingIndex.from_codec(
+        codec,
+        dense_lookup_layers=1,
+    ).save_npz(tmp_path / "static_decoding_index.npz")
     history_path = tmp_path / "histories.parquet"
     pd.DataFrame(
         {
@@ -55,6 +60,7 @@ def test_model_recommendation_service_returns_constrained_items(tmp_path: Path) 
             user_history_path=history_path,
             device="cpu",
             beam_size=3,
+            static_decoding_index_path=static_decoding_index_path,
         )
     )
 
@@ -62,7 +68,7 @@ def test_model_recommendation_service_returns_constrained_items(tmp_path: Path) 
 
     assert len(recommendations) == 2
     assert service.model_name == "generative-retrieval-static"
-    assert service.decoder_name == "static_sparse_matrix"
+    assert service.decoder_name == "static_decoding_pt"
     for item in recommendations:
         assert codec.has_semantic_id(item.semantic_id)
         assert item.title == f"Item {item.item_id}"

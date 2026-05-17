@@ -14,7 +14,7 @@ from recsys.benchmark import (
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Naive trie와 STATIC-style decoder benchmark")
+    parser = argparse.ArgumentParser(description="Naive trie와 검증용 matrix decoder benchmark")
     parser.add_argument(
         "--semantic-id-path",
         type=Path,
@@ -80,6 +80,34 @@ def main() -> None:
             f"static={result.static_latency_ms:.4f}ms, "
             f"speedup={result.speedup:.2f}x, "
             f"mask_equal={result.masks_identical}"
+        )
+    for static_decoding_result in summary.static_decoding_kernel_results:
+        print(
+            f"- static_decoding batch={static_decoding_result.batch_size}: "
+            f"candidate_gather={static_decoding_result.static_decoding_latency_ms:.4f}ms, "
+            f"rows/s={static_decoding_result.static_decoding_throughput_rows_per_s:.2f}, "
+            f"candidate_equal={static_decoding_result.candidates_identical}"
+        )
+    for harness_result in summary.static_decoding_harness_results:
+        print(
+            f"- static_decoding harness batch={harness_result.batch_size}: "
+            f"latency={harness_result.static_decoding_harness_latency_ms:.4f}ms, "
+            f"rows/s={harness_result.static_decoding_harness_throughput_rows_per_s:.2f}, "
+            f"valid={harness_result.sequences_valid}"
+        )
+    for jax_result in summary.static_decoding_jax_kernel_results:
+        print(
+            f"- static_decoding jax batch={jax_result.batch_size}: "
+            f"candidate_gather={jax_result.static_decoding_jax_latency_ms:.4f}ms, "
+            f"rows/s={jax_result.static_decoding_jax_throughput_rows_per_s:.2f}, "
+            f"candidate_equal={jax_result.candidates_identical}"
+        )
+    for jax_harness_result in summary.static_decoding_jax_harness_results:
+        print(
+            f"- static_decoding jax harness batch={jax_harness_result.batch_size}: "
+            f"latency={jax_harness_result.static_decoding_jax_harness_latency_ms:.4f}ms, "
+            f"rows/s={jax_harness_result.static_decoding_jax_harness_throughput_rows_per_s:.2f}, "
+            f"valid={jax_harness_result.sequences_valid}"
         )
     print(f"- report: {report_path}")
 

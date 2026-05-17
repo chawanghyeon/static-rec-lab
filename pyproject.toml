@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "static-rec-lab"
 version = "0.1.0"
-description = "STATIC-style constrained decoding을 추천 시스템에 적용하는 실험용 프로젝트"
+description = "static_decoding constrained decoding을 추천 시스템에 적용하는 실험용 프로젝트"
 readme = "README.md"
 requires-python = ">=3.12"
 license = { file = "LICENSE" }
@@ -18,6 +18,7 @@ dependencies = [
   "pyarrow>=16.0",
   "scikit-learn>=1.5",
   "scipy>=1.13",
+  "static-decoding @ git+https://github.com/youtube/static-constraint-decoding.git@c24f9dc8b9b8045716fff7ef750a1f0cb31c6f57",
   "torch>=2.3",
   "uvicorn[standard]>=0.30",
 ]
@@ -33,6 +34,9 @@ dev = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["apps", "recsys"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.ruff]
 line-length = 100

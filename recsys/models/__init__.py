@@ -16,7 +16,7 @@ from recsys.models.dataset import (
     infer_semantic_vocab_size,
 )
 from recsys.models.generative_retriever import GenerativeRetriever, GenerativeRetrieverConfig
-from recsys.models.inference import generate_semantic_ids
+from recsys.models.inference import generate_semantic_ids_with_static_decoding
 from recsys.models.train import (
     GenerativeTrainingMetrics,
     evaluate_model,
@@ -43,7 +43,7 @@ __all__ = [
     "build_item_index",
     "collate_generative_examples",
     "evaluate_model",
-    "generate_semantic_ids",
+    "generate_semantic_ids_with_static_decoding",
     "infer_semantic_vocab_size",
     "load_checkpoint",
     "move_batch_to_device",

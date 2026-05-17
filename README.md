@@ -1,7 +1,7 @@
 # static-rec-lab
 
-`static-rec-lab`는 STATIC-style constrained decoding을 추천 시스템 맥락에서 구현하고
-검증하기 위한 실험용 레포지토리입니다.
+`static-rec-lab`는 YouTube `static-constraint-decoding`의 `static_decoding` 패키지를
+추천 시스템 맥락에 적용하고 검증하기 위한 실험용 레포지토리입니다.
 
 목표는 단순 추천 API를 만드는 것이 아니라, 사용자 행동 이력을 기반으로 Transformer가
 추천 item의 Semantic ID를 생성하고, 존재하는 item에 해당하는 token sequence만 생성되도록
@@ -13,8 +13,8 @@ decoding을 제약하는 전체 흐름을 구현하는 것입니다.
 > Constrained Decoding, Benchmark, Serving까지 구현한다.
 
 이 프로젝트는 추천 정확도 1등을 목표로 하지 않습니다. 핵심은 Generative Retrieval에서
-유효한 item sequence만 생성하도록 제약하는 decoder를 구현하고, naive trie 방식과
-STATIC-style sparse transition 방식의 정확성 및 지연시간 차이를 실험으로 보여주는 것입니다.
+유효한 item sequence만 생성하도록 제약하는 decoder를 적용하고, naive trie 방식과
+`static_decoding` sparse transition 방식의 정확성 및 지연시간 차이를 실험으로 보여주는 것입니다.
 
 ## 구현 범위
 
@@ -23,8 +23,8 @@ STATIC-style sparse transition 방식의 정확성 및 지연시간 차이를 �
 - Popularity 및 item co-occurrence baseline
 - item_id와 Semantic ID 간 codec
 - hierarchical balanced k-means 기반 Semantic ID 생성
-- naive trie constrained decoder
-- STATIC-style matrix constrained decoder
+- naive trie constrained decoder 검증 구현
+- `static_decoding` 기반 constrained decoder
 - decoder latency 및 throughput benchmark
 - FastAPI 기반 추천 endpoint
 - 실험 결과와 trade-off를 설명하는 포트폴리오 리포트
@@ -33,7 +33,7 @@ STATIC-style sparse transition 방식의 정확성 및 지연시간 차이를 �
 
 현재 레포지토리는 데이터셋 파이프라인, 평가 지표, baseline, Semantic ID codec,
 Semantic ID 생성, Generative Retrieval 학습/평가 코드, naive trie constrained decoder,
-STATIC-style sparse transition matrix decoder, decoder latency 및 throughput benchmark,
+`static_decoding` sparse transition decoder, decoder latency 및 throughput benchmark,
 constrained beam search, 학습 checkpoint 기반 API service와 mock service 경로까지 구현된
 상태입니다.
 MovieLens Latest Small 기준 generative checkpoint를 학습하고, 추천 ranking 평가와
@@ -49,6 +49,7 @@ make train-baseline
 make eval-baseline
 make build-semantic-ids
 make validate-semantic-ids
+make build-static-decoding-index
 make train-generative
 make eval-generative
 make eval-generative-ranking
@@ -85,14 +86,19 @@ Teacher-forcing 평가:
 
 Decoder benchmark:
 
-- batch size 512 기준 STATIC-style mask 생성은 naive trie 대비 `3.36x` 빠릅니다.
-- 모든 sampled state batch에서 naive trie와 STATIC-style decoder mask 일치를 확인했습니다.
+- batch size 512 기준 검증용 matrix mask 생성은 naive trie 대비 `3.53x` 빠릅니다.
+- 모든 sampled state batch에서 naive trie와 검증용 matrix decoder mask 일치를 확인했습니다.
+- `static_decoding.decoding_pt.generate_and_apply_logprobs_mask` 후보 추출과
+  `static_decoding.decoding_pt.sparse_transition_torch` harness도 별도 benchmark에서 호출합니다.
+  harness의 dummy model도 `static_decoding.decoding_pt.RandomModel`을 사용하며,
+  생성된 Semantic ID가 모두 유효한지 검증합니다.
 
 Serving benchmark:
 
-- model-backed service 기준 `k=20`, user_id `1..610`, batch size `1, 8, 32`를 측정했습니다.
-- batch size 32 기준 평균 latency는 `13.5059 ms`, p95 latency는 `14.9834 ms`,
-  throughput은 `74.04 req/s`입니다.
+- STATIC decoder를 사용하는 model-backed service 기준 `k=20`, user_id `1..10000`,
+  batch size `1, 32, 128`을 측정했습니다.
+- batch size 128 기준 평균 latency는 `5.0425 ms`, p95 latency는 `11.3195 ms`,
+  throughput은 `198.27 req/s`입니다.
 
 해석:
 
@@ -254,6 +260,7 @@ balanced chunk로 나누기 때문에 모든 item에 고유한 Semantic ID를 �
 ```bash
 make build-semantic-ids
 make validate-semantic-ids
+make build-static-decoding-index
 ```
 
 MovieLens 32M처럼 item 수가 많은 데이터셋에서는 capacity가 충분하도록 branching factor를
@@ -271,8 +278,13 @@ make build-semantic-ids
 
 ```text
 artifacts/semantic_id/semantic_ids.json
+artifacts/semantic_id/static_decoding_index.npz
 reports/semantic_id.md
 ```
+
+`build-static-decoding-index`는 `static_decoding.csr_utils.build_static_index`가 만든
+`packed_csr`, `csr_indptr`, `start_mask`, `dense_mask`, `dense_states`,
+`layer_max_branches`를 npz artifact로 저장합니다.
 
 대용량 검증 결과는 `reports/ml_32m_validation.md`에 정리합니다.
 
@@ -300,6 +312,17 @@ make eval-generative
 make eval-generative-ranking
 ```
 
+ranking 평가는 `static_decoding` PyTorch sparse mask kernel을 사용하는 decoder로 실행됩니다.
+로컬 naive trie와 matrix decoder는 correctness 확인 및 benchmark 비교용으로만 사용합니다.
+
+`artifacts/semantic_id/static_decoding_index.npz`가 존재하면 `make eval-generative-ranking`은
+해당 static_decoding index artifact를 자동으로 로드합니다. 직접 지정할 수도 있습니다.
+
+```bash
+uv run python scripts/eval_generative_ranking.py \
+  --static-decoding-index-path artifacts/semantic_id/static_decoding_index.npz
+```
+
 생성 파일:
 
 ```text
@@ -308,11 +331,10 @@ reports/generative.md
 reports/generative_eval.md
 ```
 
-현재 모델 구현은 학습/평가 루프, checkpoint format, STATIC-style constrained beam search
-inference까지 제공합니다. API는 checkpoint, Semantic ID, user history parquet 경로가 모두
+현재 모델 구현은 학습/평가 루프, checkpoint format, `static_decoding` 기반 constrained
+beam search inference까지 제공합니다. API는 checkpoint, Semantic ID, user history parquet 경로가 모두
 환경변수로 주어지면 model-backed service를 사용합니다. 세 환경변수가 모두 없을 때만
-deterministic mock service를 사용하고, 일부만 설정되었거나 파일이 없으면 명시적으로
-실패합니다.
+deterministic mock service를 사용하고, 일부만 설정되었거나 파일이 없으면 명시적으로 실패합니다.
 
 `make eval-generative`는 teacher-forcing 기준의 validation loss, token accuracy,
 sequence accuracy를 측정합니다. `make eval-generative-ranking`은 실제 constrained beam
@@ -324,19 +346,18 @@ generation rate를 측정합니다.
 Generative Retrieval 모델이 Semantic ID token을 생성할 때 존재하지 않는 item sequence를
 만들지 못하도록 decoder 단계에서 다음 token 후보를 제한합니다.
 
-naive trie decoder는 유효한 Semantic ID sequence를 prefix tree에 삽입하고, 입력 prefix 뒤에
-올 수 있는 token만 반환합니다. STATIC-style decoder는 이 trie의 state transition을 CSR sparse
-matrix로 flatten해서 batch state update와 allowed-token mask 생성을 지원합니다.
+기본 constrained decoder는 `static_decoding.csr_utils.build_static_index`가 만든 CSR sparse
+index와 `static_decoding.decoding_pt.generate_and_apply_logprobs_mask`를 사용합니다. 로컬 naive
+trie와 matrix decoder는 같은 mask가 나오는지 확인하는 검증용 구현입니다.
 
 ```python
-from recsys.decoding import SemanticIdTrie, StaticTransitionMatrixDecoder
+from recsys.decoding import StaticDecodingIndex
 
-trie = SemanticIdTrie([(12, 4, 81, 7), (12, 4, 82, 3)])
-trie.allowed_next_tokens([12, 4])
-# (81, 82)
-
-decoder = StaticTransitionMatrixDecoder.from_trie(trie)
-decoder.allowed_next_tokens([12, 4])
+index = StaticDecodingIndex.from_semantic_ids(
+    [(12, 4, 81, 7), (12, 4, 82, 3)],
+    vocab_size=128,
+)
+index.allowed_next_tokens([12, 4])
 # (81, 82)
 ```
 
@@ -350,8 +371,14 @@ decoder.allowed_next_tokens([12, 4])
 - trie node를 integer state로 flatten
 - CSR sparse transition matrix로 유효 transition 표현
 - batch prefix state update 지원
-- STATIC-style mask가 naive trie 결과와 일치하는지 테스트로 검증
+- `static_decoding` mask가 naive trie 결과와 일치하는지 테스트로 검증
 - constrained beam search로 유효한 Semantic ID만 생성
+- `static_decoding.decoding_pt.generate_and_apply_logprobs_mask` 후보 추출 경로 검증
+- `static_decoding.decoding_jax.generate_and_apply_logprobs_mask` 후보 추출 경로 검증
+- `static_decoding.decoding_pt.sparse_transition_torch` harness 호출 검증
+- `static_decoding.decoding_jax.sparse_transition_jax` harness 호출 검증
+- `static_decoding.decoding_pt.RandomModel` benchmark model 호출 검증
+- `static_decoding.csr_utils.build_static_index` 산출물 npz 저장 CLI 제공
 - `make benchmark-decoder`로 batch size별 latency와 throughput 리포트 생성
 
 기본 benchmark는 synthetic Semantic ID로 실행되며 결과는 다음 파일에 저장됩니다.
@@ -376,6 +403,7 @@ model-backed service를 측정하려면 API 실행과 같은 `STATIC_REC_*` 환�
 ```bash
 STATIC_REC_GENERATIVE_CHECKPOINT=artifacts/generative/model.pt \
 STATIC_REC_SEMANTIC_ID_PATH=artifacts/semantic_id/semantic_ids.json \
+STATIC_REC_STATIC_DECODING_INDEX_PATH=artifacts/semantic_id/static_decoding_index.npz \
 STATIC_REC_USER_HISTORY_PARQUET=data/processed/valid.parquet \
 SERVING_BENCHMARK_SERVICE=environment \
 make benchmark-serving
@@ -404,9 +432,14 @@ Model-backed 실행 환경변수:
 ```bash
 STATIC_REC_GENERATIVE_CHECKPOINT=artifacts/generative/model.pt \
 STATIC_REC_SEMANTIC_ID_PATH=artifacts/semantic_id/semantic_ids.json \
+STATIC_REC_STATIC_DECODING_INDEX_PATH=artifacts/semantic_id/static_decoding_index.npz \
 STATIC_REC_USER_HISTORY_PARQUET=data/processed/valid.parquet \
 make serve-api
 ```
+
+API serving은 `static_decoding` 기반 STATIC decoder를 사용합니다.
+`STATIC_REC_STATIC_DECODING_INDEX_PATH`는 선택값이지만, 지정하면 static_decoding
+`build_static_index` 산출물 `.npz`를 직접 로드합니다.
 
 Endpoint:
 
@@ -441,7 +474,7 @@ user history
   -> item index sequence
   -> Transformer encoder-decoder
   -> Semantic ID token logits
-  -> STATIC-style constrained beam search
+  -> static_decoding constrained beam search
   -> valid Semantic ID only
   -> item_id recommendation
 
@@ -467,11 +500,12 @@ Semantic ID:
 
 Constrained decoding:
 
-- naive trie decoder는 정답 동작을 검증하기 위한 reference implementation입니다.
-- STATIC-style decoder는 trie transition을 integer state와 sparse transition matrix로 flatten해
-  batch mask 생성을 지원합니다.
-- 현재 구현은 논문 아이디어를 추천 시스템에 맞춰 재현한 STATIC-style 구현입니다. 공식
-  `static-constraint-decoding` 구현체와의 직접 integration benchmark는 아직 포함하지 않았습니다.
+- naive trie decoder와 로컬 matrix decoder는 정답 동작을 검증하고 benchmark 비교군을 만들기 위한 구현입니다.
+- 실제 STATIC decoder는 YouTube `static-constraint-decoding`의 `static_decoding` package를 사용합니다.
+  `build_static_index`, `generate_and_apply_logprobs_mask`, `sparse_transition_torch`를 직접 호출합니다.
+  실제 추천 모델 inference는 사용자 history와 decoder prefix를 함께 넣어야 하므로,
+  beam search loop만 모델 입력 형태에 맞추고 constraint 계산은 `static_decoding` sparse mask
+  kernel을 사용합니다.
 
 Generative model:
 
@@ -496,10 +530,28 @@ Serving benchmark:
   embedding을 결합하면 token hierarchy 품질을 개선할 수 있습니다.
 - 현재 ranking 평가는 beam search 결과만 사용합니다. score calibration, diversity constraint,
   candidate reranking은 아직 넣지 않았습니다.
-- 공식 STATIC 구현체와 직접 비교하지 않았습니다. 현재는 naive trie 대비 자체 STATIC-style sparse
-  transition decoder의 mask 동등성과 latency만 검증했습니다.
+- `static_decoding` package는 GitHub commit으로 고정해 index builder, PyTorch/JAX sparse mask
+  kernel, PyTorch/JAX sparse transition harness, benchmark용 RandomModel을 통합했습니다. 다만
+  TPU, GPU, `torch.compile` 기반 benchmark는 아직 별도 환경에서 재현하지 않았습니다.
 - serving benchmark는 service 직접 호출 기준입니다. 실제 API endpoint benchmark는 별도 HTTP
   client 기반 측정으로 확장할 수 있습니다.
+
+## static_decoding 통합 방식
+
+이 프로젝트는 YouTube `static-constraint-decoding` repository를 복사하지 않고,
+`static-decoding` GitHub dependency를 commit
+`c24f9dc8b9b8045716fff7ef750a1f0cb31c6f57`로 고정해 사용합니다. naive trie와
+로컬 matrix decoder는 correctness 확인과 benchmark 비교군을 위한 검증용 코드입니다.
+
+upstream 구현체는 JAX/TPU와 PyTorch/GPU를 대상으로 `start_mask`, `dense_mask`, `dense_states`,
+`packed_csr`, `csr_indptr`, `layer_max_branches`를 사용하는 dense/sparse hybrid index를
+구성합니다. `static-rec-lab`의 STATIC decoder는 `static_decoding.csr_utils.build_static_index`,
+PyTorch/JAX `generate_and_apply_logprobs_mask`, PyTorch/JAX sparse transition harness,
+benchmark용 `RandomModel`을 직접 호출하고, `make build-static-decoding-index`로
+static_decoding index artifact를 저장합니다.
+
+자세한 통합 방식은 [reports/static_decoding_integration.md](reports/static_decoding_integration.md)에
+정리했습니다.
 
 ## 프로젝트 구조
 

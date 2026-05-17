@@ -34,7 +34,7 @@ def test_get_user_recommendations_returns_mock_items() -> None:
     payload = response.json()
     assert payload["user_id"] == 123
     assert payload["model"] == "mock-generative-retrieval-static"
-    assert payload["decoder"] == "static_sparse_matrix"
+    assert payload["decoder"] == "mock_static_decoding"
     assert payload["latency_ms"] >= 0
     assert len(payload["items"]) == 3
     scores = [item["score"] for item in payload["items"]]
@@ -99,6 +99,7 @@ def test_build_recommendation_service_uses_mock_when_model_env_is_absent(
     monkeypatch.delenv("STATIC_REC_GENERATIVE_CHECKPOINT", raising=False)
     monkeypatch.delenv("STATIC_REC_SEMANTIC_ID_PATH", raising=False)
     monkeypatch.delenv("STATIC_REC_USER_HISTORY_PARQUET", raising=False)
+    monkeypatch.delenv("STATIC_REC_STATIC_DECODING_INDEX_PATH", raising=False)
 
     service = build_recommendation_service_from_environment()
 
@@ -124,4 +125,18 @@ def test_build_recommendation_service_rejects_missing_model_files(
     monkeypatch.setenv("STATIC_REC_USER_HISTORY_PARQUET", "/tmp/missing-history.parquet")
 
     with pytest.raises(FileNotFoundError, match="찾을 수 없습니다"):
+        build_recommendation_service_from_environment()
+
+
+def test_build_recommendation_service_rejects_missing_static_decoding_index(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("STATIC_REC_GENERATIVE_CHECKPOINT", "/tmp/missing-model.pt")
+    monkeypatch.setenv("STATIC_REC_SEMANTIC_ID_PATH", "/tmp/missing-semantic.json")
+    monkeypatch.setenv("STATIC_REC_USER_HISTORY_PARQUET", "/tmp/missing-history.parquet")
+    monkeypatch.setenv(
+        "STATIC_REC_STATIC_DECODING_INDEX_PATH", "/tmp/missing-static-decoding-index.npz"
+    )
+
+    with pytest.raises(FileNotFoundError, match="STATIC_REC_STATIC_DECODING_INDEX_PATH"):
         build_recommendation_service_from_environment()

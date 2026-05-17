@@ -1,4 +1,4 @@
-"""STATIC-style sparse transition matrix decoder."""
+"""검증용 sparse transition matrix decoder."""
 
 from __future__ import annotations
 

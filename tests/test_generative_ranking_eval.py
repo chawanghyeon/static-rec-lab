@@ -5,7 +5,7 @@ import pandas as pd
 import pytest
 import torch
 
-from recsys.decoding import StaticTransitionMatrixDecoder
+from recsys.decoding.static_decoding import StaticDecodingIndex
 from recsys.evaluation import (
     GenerativeRankingEvaluation,
     evaluate_generative_ranking,
@@ -51,13 +51,44 @@ def test_evaluate_generative_ranking_computes_recommendation_metrics() -> None:
     assert evaluation.generated_sequences > 0
 
 
+def test_evaluate_generative_ranking_loads_static_decoding_index_artifact(
+    tmp_path: Path,
+) -> None:
+    codec = _codec()
+    static_decoding_index_path = StaticDecodingIndex.from_codec(
+        codec,
+        dense_lookup_layers=1,
+    ).save_npz(tmp_path / "static_decoding_index.npz")
+    frame = pd.DataFrame(
+        {
+            "history_item_ids": [[10]],
+            "target_item_id": [20],
+        }
+    )
+    bundle = build_generative_dataset(_training_frame(), codec)
+
+    evaluation = evaluate_generative_ranking(
+        model=cast(GenerativeRetriever, _FakeGenerativeModel()),
+        item_to_index=bundle.item_to_index,
+        codec=codec,
+        eval_frame=frame,
+        split_name="valid",
+        cutoffs=(1,),
+        beam_size=3,
+        device=torch.device("cpu"),
+        static_decoding_index_path=static_decoding_index_path,
+    )
+
+    assert evaluation.metrics_by_k[1].recall == pytest.approx(1.0)
+
+
 def test_recommend_with_constrained_generation_filters_history_items() -> None:
     codec = _codec()
     bundle = build_generative_dataset(_training_frame(), codec)
 
     result = recommend_with_constrained_generation(
         model=cast(GenerativeRetriever, _FakeGenerativeModel()),
-        decoder=StaticTransitionMatrixDecoder.from_codec(codec),
+        decoder=StaticDecodingIndex.from_codec(codec, dense_lookup_layers=1),
         codec=codec,
         history_item_ids=[20],
         item_to_index=bundle.item_to_index,
@@ -105,6 +136,7 @@ def test_write_generative_ranking_report(tmp_path: Path) -> None:
     assert "Recall@K" in report
     assert "invalid generation rate" in report
     assert "unknown target" in report
+    assert "static_decoding_pt" in report
 
 
 def test_evaluate_generative_ranking_rejects_missing_columns() -> None:
