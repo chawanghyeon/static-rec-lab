@@ -524,7 +524,7 @@ def write_decoder_benchmark_report(
                 "## static_decoding sparse_transition_torch harness",
                 "",
                 "`static_decoding.decoding_pt.sparse_transition_torch`를 그대로 호출해 "
-                "upstream PyTorch decoding loop가 생성한 Semantic ID가 모두 유효한지 "
+                "`static_decoding` PyTorch decoding loop가 생성한 Semantic ID가 모두 유효한지 "
                 "검증하고 end-to-end harness latency를 측정합니다. 이 harness는 "
                 "`static_decoding.decoding_pt.RandomModel`을 사용하므로 추천 모델 품질 "
                 "평가는 아니며, static_decoding 호출 경로와 constrained generation 동작 검증에 "

@@ -86,7 +86,7 @@ Teacher-forcing 평가:
 
 Decoder benchmark:
 
-- batch size 512 기준 검증용 matrix mask 생성은 naive trie 대비 `3.53x` 빠릅니다.
+- batch size 512 기준 검증용 matrix mask 생성은 naive trie 대비 `3.51x` 빠릅니다.
 - 모든 sampled state batch에서 naive trie와 검증용 matrix decoder mask 일치를 확인했습니다.
 - `static_decoding.decoding_pt.generate_and_apply_logprobs_mask` 후보 추출과
   `static_decoding.decoding_pt.sparse_transition_torch` harness도 별도 benchmark에서 호출합니다.
@@ -97,8 +97,8 @@ Serving benchmark:
 
 - STATIC decoder를 사용하는 model-backed service 기준 `k=20`, user_id `1..10000`,
   batch size `1, 32, 128`을 측정했습니다.
-- batch size 128 기준 평균 latency는 `5.0425 ms`, p95 latency는 `11.3195 ms`,
-  throughput은 `198.27 req/s`입니다.
+- batch size 128 기준 평균 latency는 `4.6436 ms`, p95 latency는 `10.1986 ms`,
+  throughput은 `215.32 req/s`입니다.
 
 해석:
 
@@ -313,7 +313,7 @@ make eval-generative-ranking
 ```
 
 ranking 평가는 `static_decoding` PyTorch sparse mask kernel을 사용하는 decoder로 실행됩니다.
-로컬 naive trie와 matrix decoder는 correctness 확인 및 benchmark 비교용으로만 사용합니다.
+로컬 naive trie와 matrix decoder는 정확성 확인 및 벤치마크 비교용으로만 사용합니다.
 
 `artifacts/semantic_id/static_decoding_index.npz`가 존재하면 `make eval-generative-ranking`은
 해당 static_decoding index artifact를 자동으로 로드합니다. 직접 지정할 수도 있습니다.
@@ -541,13 +541,14 @@ Serving benchmark:
 이 프로젝트는 YouTube `static-constraint-decoding` repository를 복사하지 않고,
 `static-decoding` GitHub dependency를 commit
 `c24f9dc8b9b8045716fff7ef750a1f0cb31c6f57`로 고정해 사용합니다. naive trie와
-로컬 matrix decoder는 correctness 확인과 benchmark 비교군을 위한 검증용 코드입니다.
+로컬 matrix decoder는 정확성 확인과 벤치마크 비교군을 위한 검증용 코드입니다.
 
-upstream 구현체는 JAX/TPU와 PyTorch/GPU를 대상으로 `start_mask`, `dense_mask`, `dense_states`,
-`packed_csr`, `csr_indptr`, `layer_max_branches`를 사용하는 dense/sparse hybrid index를
-구성합니다. `static-rec-lab`의 STATIC decoder는 `static_decoding.csr_utils.build_static_index`,
-PyTorch/JAX `generate_and_apply_logprobs_mask`, PyTorch/JAX sparse transition harness,
-benchmark용 `RandomModel`을 직접 호출하고, `make build-static-decoding-index`로
+`static_decoding` package는 JAX/TPU와 PyTorch/GPU를 대상으로 `start_mask`, `dense_mask`,
+`dense_states`, `packed_csr`, `csr_indptr`, `layer_max_branches`를 사용하는 dense/sparse
+hybrid index를 구성합니다. `static-rec-lab`의 STATIC decoder는
+`static_decoding.csr_utils.build_static_index`, PyTorch/JAX `generate_and_apply_logprobs_mask`,
+PyTorch/JAX sparse transition harness, 벤치마크용 `RandomModel`을 직접 호출하고,
+`make build-static-decoding-index`로
 static_decoding index artifact를 저장합니다.
 
 자세한 통합 방식은 [reports/static_decoding_integration.md](reports/static_decoding_integration.md)에

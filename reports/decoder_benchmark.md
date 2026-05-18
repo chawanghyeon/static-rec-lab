@@ -17,10 +17,10 @@ naive trie decoder와 검증용 sparse transition matrix decoder의 allowed-toke
 
 | batch_size | mask 일치 | naive latency ms | matrix latency ms | naive rows/s | matrix rows/s | speedup |
 |---:|:---:|---:|---:|---:|---:|---:|
-| 1 | 예 | 0.0022 | 0.0270 | 450,874.92 | 37,084.53 | 0.08x |
-| 32 | 예 | 0.0157 | 0.0304 | 2,039,840.64 | 1,052,170.22 | 0.52x |
-| 128 | 예 | 0.0570 | 0.0381 | 2,245,860.29 | 3,361,123.88 | 1.50x |
-| 512 | 예 | 0.2178 | 0.0617 | 2,350,384.81 | 8,295,583.30 | 3.53x |
+| 1 | 예 | 0.0021 | 0.0265 | 466,563.71 | 37,673.07 | 0.08x |
+| 32 | 예 | 0.0143 | 0.0292 | 2,231,389.51 | 1,095,749.69 | 0.49x |
+| 128 | 예 | 0.0534 | 0.0366 | 2,394,910.67 | 3,495,516.18 | 1.46x |
+| 512 | 예 | 0.2115 | 0.0603 | 2,420,326.93 | 8,486,480.89 | 3.51x |
 
 ## static_decoding PyTorch kernel
 
@@ -28,21 +28,21 @@ naive trie decoder와 검증용 sparse transition matrix decoder의 allowed-toke
 
 | batch_size | 후보 일치 | static_decoding latency ms | static_decoding rows/s |
 |---:|:---:|---:|---:|
-| 1 | 예 | 0.0251 | 39,828.09 |
-| 32 | 예 | 0.0299 | 1,071,518.50 |
-| 128 | 예 | 0.0308 | 4,150,790.43 |
-| 512 | 예 | 0.0912 | 5,612,727.30 |
+| 1 | 예 | 0.0253 | 39,480.83 |
+| 32 | 예 | 0.0277 | 1,157,009.85 |
+| 128 | 예 | 0.0316 | 4,050,366.31 |
+| 512 | 예 | 0.0887 | 5,769,664.19 |
 
 ## static_decoding sparse_transition_torch harness
 
-`static_decoding.decoding_pt.sparse_transition_torch`를 그대로 호출해 upstream PyTorch decoding loop가 생성한 Semantic ID가 모두 유효한지 검증하고 end-to-end harness latency를 측정합니다. 이 harness는 `static_decoding.decoding_pt.RandomModel`을 사용하므로 추천 모델 품질 평가는 아니며, static_decoding 호출 경로와 constrained generation 동작 검증에 초점을 둡니다.
+`static_decoding.decoding_pt.sparse_transition_torch`를 그대로 호출해 `static_decoding` PyTorch decoding loop가 생성한 Semantic ID가 모두 유효한지 검증하고 end-to-end harness latency를 측정합니다. 이 harness는 `static_decoding.decoding_pt.RandomModel`을 사용하므로 추천 모델 품질 평가는 아니며, static_decoding 호출 경로와 constrained generation 동작 검증에 초점을 둡니다.
 
 | batch_size | 생성 ID 유효 | static_decoding harness latency ms | static_decoding harness rows/s |
 |---:|:---:|---:|---:|
-| 1 | 예 | 0.1291 | 7,743.48 |
-| 32 | 예 | 0.2965 | 107,912.76 |
-| 128 | 예 | 0.4092 | 312,828.10 |
-| 512 | 예 | 0.8791 | 582,392.30 |
+| 1 | 예 | 0.1234 | 8,101.79 |
+| 32 | 예 | 0.2955 | 108,288.13 |
+| 128 | 예 | 0.4052 | 315,892.74 |
+| 512 | 예 | 0.8640 | 592,592.88 |
 
 ## static_decoding JAX kernel
 
@@ -50,10 +50,10 @@ naive trie decoder와 검증용 sparse transition matrix decoder의 allowed-toke
 
 | batch_size | 후보 일치 | static_decoding JAX latency ms | static_decoding JAX rows/s |
 |---:|:---:|---:|---:|
-| 1 | 예 | 0.5994 | 1,668.20 |
-| 32 | 예 | 0.5858 | 54,624.09 |
-| 128 | 예 | 0.5772 | 221,773.99 |
-| 512 | 예 | 0.6109 | 838,170.03 |
+| 1 | 예 | 0.5704 | 1,753.19 |
+| 32 | 예 | 0.5750 | 55,654.19 |
+| 128 | 예 | 0.5613 | 228,042.05 |
+| 512 | 예 | 0.6009 | 852,096.61 |
 
 ## static_decoding sparse_transition_jax harness
 
@@ -61,10 +61,10 @@ naive trie decoder와 검증용 sparse transition matrix decoder의 allowed-toke
 
 | batch_size | 생성 ID 유효 | static_decoding JAX harness latency ms | static_decoding JAX harness rows/s |
 |---:|:---:|---:|---:|
-| 1 | 예 | 0.1638 | 6,105.02 |
-| 32 | 예 | 0.4082 | 78,393.50 |
-| 128 | 예 | 0.7581 | 168,841.58 |
-| 512 | 예 | 1.3137 | 389,737.17 |
+| 1 | 예 | 0.1522 | 6,571.98 |
+| 32 | 예 | 0.3905 | 81,937.83 |
+| 128 | 예 | 0.7248 | 176,603.79 |
+| 512 | 예 | 1.2715 | 402,679.29 |
 
 ## 검증
 

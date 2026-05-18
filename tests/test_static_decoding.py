@@ -1,3 +1,4 @@
+from importlib import import_module
 from pathlib import Path
 
 import jax.numpy as jnp
@@ -18,6 +19,20 @@ from recsys.decoding import (
 from recsys.decoding.naive_trie import SemanticIdTrie
 from recsys.semantic_id import SemanticIdCodec
 from scripts.build_static_decoding_index import resolve_dense_lookup_layers
+
+
+def test_static_decoding_dependency_entrypoints_are_available() -> None:
+    csr_utils = import_module("static_decoding.csr_utils")
+    decoding_pt = import_module("static_decoding.decoding_pt")
+    decoding_jax = import_module("static_decoding.decoding_jax")
+
+    assert csr_utils.build_static_index.__module__ == "static_decoding.csr_utils"
+    assert decoding_pt.generate_and_apply_logprobs_mask.__module__ == "static_decoding.decoding_pt"
+    assert decoding_pt.sparse_transition_torch.__module__ == "static_decoding.decoding_pt"
+    assert (
+        decoding_jax.generate_and_apply_logprobs_mask.__module__ == "static_decoding.decoding_jax"
+    )
+    assert decoding_jax.sparse_transition_jax.__module__ == "static_decoding.decoding_jax"
 
 
 def test_static_decoding_index_matches_naive_trie_prefixes() -> None:

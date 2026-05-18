@@ -23,8 +23,8 @@
 
 | split | examples | unknown targets | generated sequences | invalid sequences | invalid generation rate | history filtered | duplicate filtered | avg recs/query | elapsed ms |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| valid | 610 | 20 | 30,500 | 0 | 0.000000 | 2,073 | 0 | 20.00 | 27438.01 |
-| test | 610 | 24 | 30,500 | 0 | 0.000000 | 2,054 | 0 | 20.00 | 22215.41 |
+| valid | 610 | 20 | 30,500 | 0 | 0.000000 | 2,073 | 0 | 20.00 | 24114.41 |
+| test | 610 | 24 | 30,500 | 0 | 0.000000 | 2,054 | 0 | 20.00 | 22195.81 |
 
 ## 해석
 
