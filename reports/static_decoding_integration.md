@@ -88,9 +88,9 @@ constraint index와 sparse candidate gather는 `static_decoding` package 함수�
 - `static_decoding` PyTorch/JAX harness가 생성한 Semantic ID가 모두 유효한지
 - Generative Retrieval ranking 평가에서 invalid generation rate가 0인지
 
-## 남은 환경 검증
+## 추가 환경 검증 대상
 
-아직 로컬에서 재현하지 않은 항목:
+로컬 CPU 환경 밖에서 추가로 확인할 항목:
 
 - GPU latency benchmark
 - TPU latency benchmark

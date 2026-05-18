@@ -30,8 +30,12 @@ def train_one_epoch(
     optimizer: torch.optim.Optimizer,
     *,
     device: torch.device,
+    log_every_batches: int | None = None,
 ) -> GenerativeTrainingMetrics:
     """Teacher forcing으로 한 epoch 학습한다."""
+    if log_every_batches is not None and log_every_batches < 1:
+        msg = "log_every_batches는 None이거나 1 이상이어야 합니다."
+        raise ValueError(msg)
     model.train()
     total_loss = 0.0
     total_examples = 0
@@ -40,7 +44,7 @@ def train_one_epoch(
     correct_sequences = 0
     loss_fn = nn.CrossEntropyLoss(ignore_index=PAD_TOKEN_ID, reduction="sum")
 
-    for batch in dataloader:
+    for batch_index, batch in enumerate(dataloader, start=1):
         batch = move_batch_to_device(batch, device)
         optimizer.zero_grad()
         logits = model(
@@ -60,6 +64,13 @@ def train_one_epoch(
         total_tokens += _num_target_tokens(batch.target_token_ids)
         correct_tokens += _num_correct_tokens(logits.detach(), batch.target_token_ids)
         correct_sequences += _num_correct_sequences(logits.detach(), batch.target_token_ids)
+        if log_every_batches is not None and batch_index % log_every_batches == 0:
+            print(
+                "train "
+                f"batches={batch_index:,} "
+                f"examples={total_examples:,} "
+                f"loss={total_loss / max(total_tokens, 1):.6f}"
+            )
 
     return _aggregate_metrics(
         total_loss=total_loss,
@@ -76,8 +87,12 @@ def evaluate_model(
     dataloader: Iterable[GenerativeBatch],
     *,
     device: torch.device,
+    log_every_batches: int | None = None,
 ) -> GenerativeTrainingMetrics:
     """Validation loss와 token/sequence accuracy를 계산한다."""
+    if log_every_batches is not None and log_every_batches < 1:
+        msg = "log_every_batches는 None이거나 1 이상이어야 합니다."
+        raise ValueError(msg)
     model.eval()
     total_loss = 0.0
     total_examples = 0
@@ -86,7 +101,7 @@ def evaluate_model(
     correct_sequences = 0
     loss_fn = nn.CrossEntropyLoss(ignore_index=PAD_TOKEN_ID, reduction="sum")
 
-    for batch in dataloader:
+    for batch_index, batch in enumerate(dataloader, start=1):
         batch = move_batch_to_device(batch, device)
         logits = model(
             batch.history_item_ids,
@@ -102,6 +117,13 @@ def evaluate_model(
         total_tokens += _num_target_tokens(batch.target_token_ids)
         correct_tokens += _num_correct_tokens(logits, batch.target_token_ids)
         correct_sequences += _num_correct_sequences(logits, batch.target_token_ids)
+        if log_every_batches is not None and batch_index % log_every_batches == 0:
+            print(
+                "eval "
+                f"batches={batch_index:,} "
+                f"examples={total_examples:,} "
+                f"loss={total_loss / max(total_tokens, 1):.6f}"
+            )
 
     return _aggregate_metrics(
         total_loss=total_loss,

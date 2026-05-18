@@ -4,6 +4,7 @@
 
 리포트 목록:
 
+- [portfolio_summary.md](portfolio_summary.md): 포트폴리오 제출용 1페이지 요약
 - `baseline.md`: baseline 추천 성능
 - `semantic_id.md`: Semantic ID 생성 방식과 검증 결과
 - `generative.md`: Generative Retrieval teacher-forcing 평가

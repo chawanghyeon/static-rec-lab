@@ -10,9 +10,12 @@ from recsys.decoding import StaticDecodingIndex
 from recsys.models import (
     BOS_TOKEN_ID,
     GenerativeBatch,
+    GenerativeParquetBatchIterableDataset,
+    GenerativeParquetIterableDataset,
     GenerativeRetriever,
     GenerativeRetrieverConfig,
     build_generative_dataset,
+    build_item_index_from_codec,
     collate_generative_examples,
     evaluate_model,
     generate_semantic_ids_with_static_decoding,
@@ -93,6 +96,49 @@ def test_train_evaluate_and_checkpoint_roundtrip(tmp_path: Path) -> None:
     assert eval_metrics.loss > 0
     assert item_to_index == bundle.item_to_index
     assert isinstance(loaded_model, GenerativeRetriever)
+
+
+def test_generative_parquet_iterable_dataset_streams_examples(tmp_path: Path) -> None:
+    codec = _sample_codec()
+    frame = _sample_frame()
+    path = tmp_path / "train.parquet"
+    frame.to_parquet(path, index=False)
+    item_to_index = build_item_index_from_codec(codec)
+
+    dataset = GenerativeParquetIterableDataset(
+        path,
+        codec,
+        item_to_index=item_to_index,
+        parquet_batch_size=1,
+    )
+
+    examples = list(dataset)
+
+    assert len(examples) == 3
+    assert examples[0].history_item_indices == (1,)
+    assert examples[0].target_token_ids == (2, 3, 4)
+
+
+def test_generative_parquet_batch_iterable_dataset_streams_batches(tmp_path: Path) -> None:
+    codec = _sample_codec()
+    frame = _sample_frame()
+    path = tmp_path / "train.parquet"
+    frame.to_parquet(path, index=False)
+
+    dataset = GenerativeParquetBatchIterableDataset(
+        path,
+        codec,
+        item_to_index=build_item_index_from_codec(codec),
+        batch_size=2,
+        parquet_batch_size=2,
+    )
+
+    batches = list(dataset)
+
+    assert len(batches) == 2
+    assert batches[0].history_item_ids.shape[0] == 2
+    assert batches[0].target_token_ids.shape == (2, 3)
+    assert batches[1].history_item_ids.shape[0] == 1
 
 
 def test_generate_semantic_ids_with_static_decoding_returns_valid_results() -> None:

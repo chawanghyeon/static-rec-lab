@@ -16,6 +16,30 @@ decoding을 제약하는 전체 흐름을 구현하는 것입니다.
 유효한 item sequence만 생성하도록 제약하는 decoder를 적용하고, naive trie 방식과
 `static_decoding` sparse transition 방식의 정확성 및 지연시간 차이를 실험으로 보여주는 것입니다.
 
+## 빠른 검토 가이드
+
+이 레포를 처음 볼 때는 아래 순서로 보면 됩니다.
+
+1. [포트폴리오 요약](reports/portfolio_summary.md): 문제 정의, 구현 범위, 핵심 수치, 해석을
+   한 페이지로 정리했습니다.
+2. [static_decoding 통합 리포트](reports/static_decoding_integration.md): YouTube
+   `static_decoding` package를 어떤 경로로 직접 호출하는지 정리했습니다.
+3. [decoder benchmark](reports/decoder_benchmark.md): naive trie, 검증용 matrix,
+   `static_decoding` PyTorch/JAX kernel 및 harness의 validity와 latency를 비교합니다.
+4. [Generative Retrieval 추천 평가](reports/generative_eval.md): constrained decoding을 적용한
+   추천 ranking 성능과 invalid generation rate를 확인합니다.
+5. [Serving benchmark](reports/serving_benchmark.md): model-backed recommendation service의
+   latency를 확인합니다.
+
+최소 검증 명령:
+
+```bash
+uv sync --group dev
+make lint
+make test
+make benchmark-decoder
+```
+
 ## 구현 범위
 
 - MovieLens sequential recommendation 데이터 파이프라인
@@ -86,7 +110,7 @@ Teacher-forcing 평가:
 
 Decoder benchmark:
 
-- batch size 512 기준 검증용 matrix mask 생성은 naive trie 대비 `3.51x` 빠릅니다.
+- batch size 512 기준 검증용 matrix mask 생성은 naive trie 대비 `3.37x` 빠릅니다.
 - 모든 sampled state batch에서 naive trie와 검증용 matrix decoder mask 일치를 확인했습니다.
 - `static_decoding.decoding_pt.generate_and_apply_logprobs_mask` 후보 추출과
   `static_decoding.decoding_pt.sparse_transition_torch` harness도 별도 benchmark에서 호출합니다.
@@ -529,10 +553,10 @@ Serving benchmark:
 - Semantic ID는 interaction embedding 기반입니다. 영화 metadata, text embedding, collaborative
   embedding을 결합하면 token hierarchy 품질을 개선할 수 있습니다.
 - 현재 ranking 평가는 beam search 결과만 사용합니다. score calibration, diversity constraint,
-  candidate reranking은 아직 넣지 않았습니다.
+  candidate reranking은 이번 범위에서 제외했습니다.
 - `static_decoding` package는 GitHub commit으로 고정해 index builder, PyTorch/JAX sparse mask
   kernel, PyTorch/JAX sparse transition harness, benchmark용 RandomModel을 통합했습니다. 다만
-  TPU, GPU, `torch.compile` 기반 benchmark는 아직 별도 환경에서 재현하지 않았습니다.
+  TPU, GPU, `torch.compile` 기반 benchmark는 별도 환경 검증 대상으로 남겼습니다.
 - serving benchmark는 service 직접 호출 기준입니다. 실제 API endpoint benchmark는 별도 HTTP
   client 기반 측정으로 확장할 수 있습니다.
 
