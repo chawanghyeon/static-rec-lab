@@ -19,6 +19,7 @@ from recsys.decoding import (
 from recsys.evaluation.metrics import RankingMetrics, evaluate_ranking_at_k
 from recsys.models import (
     GenerativeRetriever,
+    generate_semantic_ids_batch_with_static_decoding,
     generate_semantic_ids_with_static_decoding,
 )
 from recsys.semantic_id import SemanticIdCodec, UnknownSemanticIdError
@@ -71,12 +72,16 @@ def evaluate_generative_ranking(
     beam_size: int,
     device: torch.device,
     static_decoding_index_path: str | Path | None = None,
+    inference_batch_size: int = 1,
 ) -> GenerativeRankingEvaluation:
     """Generative model + STATIC decoder를 baseline과 같은 ranking metric으로 평가한다."""
     _validate_eval_frame(eval_frame)
     _validate_cutoffs(cutoffs)
     if beam_size < 1:
         msg = "beam_size는 1 이상이어야 합니다."
+        raise ValueError(msg)
+    if inference_batch_size < 1:
+        msg = "inference_batch_size는 1 이상이어야 합니다."
         raise ValueError(msg)
 
     max_k = max(cutoffs)
@@ -95,29 +100,49 @@ def evaluate_generative_ranking(
     duplicate_items = 0
     started_at = perf_counter()
 
-    for row in eval_frame.itertuples(index=False):
-        history = _coerce_item_ids(cast(Any, row.history_item_ids))
-        target_item_id = int(cast(Any, row.target_item_id))
-        if not codec.has_item(target_item_id):
-            unknown_target_examples += 1
-
-        result = recommend_with_constrained_generation(
-            model=model,
-            decoder=decoder,
-            codec=codec,
-            history_item_ids=history,
-            item_to_index=item_to_index,
-            k=max_k,
-            beam_size=effective_beam_size,
-            device=device,
-            static_decoding_torch_index=static_decoding_torch_index,
+    rows = list(eval_frame.itertuples(index=False))
+    for start in range(0, len(rows), inference_batch_size):
+        row_batch = rows[start : start + inference_batch_size]
+        histories = [_coerce_item_ids(cast(Any, row.history_item_ids)) for row in row_batch]
+        target_item_ids = [int(cast(Any, row.target_item_id)) for row in row_batch]
+        unknown_target_examples += sum(
+            1 for target_item_id in target_item_ids if not codec.has_item(target_item_id)
         )
-        recommendations.append(result.item_ids)
-        relevant_items.append((target_item_id,))
-        generated_sequences += result.generated_sequences
-        invalid_sequences += result.invalid_sequences
-        history_filtered_items += result.history_filtered_items
-        duplicate_items += result.duplicate_items
+
+        if inference_batch_size == 1:
+            batch_results: tuple[GenerativeRecommendationResult, ...] = (
+                recommend_with_constrained_generation(
+                    model=model,
+                    decoder=decoder,
+                    codec=codec,
+                    history_item_ids=histories[0],
+                    item_to_index=item_to_index,
+                    k=max_k,
+                    beam_size=effective_beam_size,
+                    device=device,
+                    static_decoding_torch_index=static_decoding_torch_index,
+                ),
+            )
+        else:
+            batch_results = recommend_batch_with_constrained_generation(
+                model=model,
+                decoder=decoder,
+                codec=codec,
+                history_item_ids_batch=histories,
+                item_to_index=item_to_index,
+                k=max_k,
+                beam_size=effective_beam_size,
+                device=device,
+                static_decoding_torch_index=static_decoding_torch_index,
+            )
+
+        for target_item_id, result in zip(target_item_ids, batch_results, strict=True):
+            recommendations.append(result.item_ids)
+            relevant_items.append((target_item_id,))
+            generated_sequences += result.generated_sequences
+            invalid_sequences += result.invalid_sequences
+            history_filtered_items += result.history_filtered_items
+            duplicate_items += result.duplicate_items
 
     elapsed_ms = (perf_counter() - started_at) * 1000
     metrics_by_k = {
@@ -205,6 +230,95 @@ def recommend_with_constrained_generation(
     )
 
 
+def recommend_batch_with_constrained_generation(
+    *,
+    model: GenerativeRetriever,
+    decoder: StaticDecodingIndex,
+    codec: SemanticIdCodec,
+    history_item_ids_batch: Sequence[Sequence[int]],
+    item_to_index: Mapping[int, int],
+    k: int,
+    beam_size: int,
+    device: torch.device,
+    static_decoding_torch_index: StaticDecodingTorchIndex | None = None,
+) -> tuple[GenerativeRecommendationResult, ...]:
+    """Batched STATIC constrained beam search 결과를 item ranking으로 변환한다."""
+    if k < 1:
+        msg = "k는 1 이상이어야 합니다."
+        raise ValueError(msg)
+    if beam_size < 1:
+        msg = "beam_size는 1 이상이어야 합니다."
+        raise ValueError(msg)
+
+    batch_beam_results = generate_semantic_ids_batch_with_static_decoding(
+        model=model,
+        index=decoder,
+        torch_index=static_decoding_torch_index,
+        history_item_ids_batch=history_item_ids_batch,
+        item_to_index=item_to_index,
+        beam_size=max(beam_size, k),
+        max_results=max(beam_size, k),
+        device=device,
+    )
+    results: list[GenerativeRecommendationResult] = []
+    for history_item_ids, beam_results in zip(
+        history_item_ids_batch,
+        batch_beam_results,
+        strict=True,
+    ):
+        results.append(
+            _beam_results_to_recommendation_result(
+                beam_results=beam_results,
+                codec=codec,
+                history_item_ids=history_item_ids,
+                k=k,
+            )
+        )
+    return tuple(results)
+
+
+def _beam_results_to_recommendation_result(
+    *,
+    beam_results: Sequence[Any],
+    codec: SemanticIdCodec,
+    history_item_ids: Sequence[int],
+    k: int,
+) -> GenerativeRecommendationResult:
+    history_items = {int(item_id) for item_id in history_item_ids}
+    seen_items: set[int] = set()
+    item_ids: list[int] = []
+    invalid_sequences = 0
+    history_filtered_items = 0
+    duplicate_items = 0
+
+    for beam_result in beam_results:
+        try:
+            item_id = codec.decode_semantic_id(beam_result.semantic_id)
+        except UnknownSemanticIdError:
+            invalid_sequences += 1
+            continue
+
+        if item_id in history_items:
+            history_filtered_items += 1
+            continue
+        if item_id in seen_items:
+            duplicate_items += 1
+            continue
+
+        item_ids.append(item_id)
+        seen_items.add(item_id)
+        if len(item_ids) >= k:
+            break
+
+    return GenerativeRecommendationResult(
+        item_ids=tuple(item_ids),
+        generated_sequences=len(beam_results),
+        invalid_sequences=invalid_sequences,
+        history_filtered_items=history_filtered_items,
+        duplicate_items=duplicate_items,
+    )
+
+
 def write_generative_ranking_report(
     report_path: str | Path,
     evaluations: Sequence[GenerativeRankingEvaluation],
@@ -213,6 +327,7 @@ def write_generative_ranking_report(
     semantic_id_path: str | Path,
     beam_size: int,
     cutoffs: Sequence[int],
+    inference_batch_size: int = 1,
     decoder_name: str = STATIC_DECODING_DECODER_NAME,
     static_decoding_index_path: str | Path | None = None,
 ) -> Path:
@@ -233,6 +348,7 @@ def write_generative_ranking_report(
             else []
         ),
         f"- beam size: {beam_size}",
+        f"- inference batch size: {inference_batch_size}",
         f"- 평가 cutoff: {', '.join(str(cutoff) for cutoff in cutoffs)}",
         "- 추천 ranking 생성 후 사용자 history에 이미 포함된 item은 제외합니다.",
         "",

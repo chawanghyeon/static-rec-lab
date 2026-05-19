@@ -18,6 +18,7 @@ from recsys.models import (
     build_item_index_from_codec,
     collate_generative_examples,
     evaluate_model,
+    generate_semantic_ids_batch_with_static_decoding,
     generate_semantic_ids_with_static_decoding,
     load_checkpoint,
     save_checkpoint,
@@ -167,6 +168,47 @@ def test_generate_semantic_ids_with_static_decoding_returns_valid_results() -> N
         assert codec.has_semantic_id(result.semantic_id)
         assert index.contains(result.semantic_id)
         assert 0 <= result.score <= 1
+
+
+def test_generate_semantic_ids_batch_with_static_decoding_matches_single_results() -> None:
+    torch.manual_seed(7)
+    codec = _sample_codec()
+    bundle = build_generative_dataset(_sample_frame(), codec)
+    model = _tiny_model(bundle.item_vocab_size, bundle.semantic_vocab_size)
+    index = StaticDecodingIndex.from_codec(
+        codec,
+        vocab_size=bundle.semantic_vocab_size,
+        dense_lookup_layers=2,
+    )
+    histories = ([10, 20], [30, 40])
+
+    single_results = [
+        generate_semantic_ids_with_static_decoding(
+            model=model,
+            index=index,
+            history_item_ids=history,
+            item_to_index=bundle.item_to_index,
+            beam_size=3,
+            max_results=2,
+            device=torch.device("cpu"),
+        )
+        for history in histories
+    ]
+    batch_results = generate_semantic_ids_batch_with_static_decoding(
+        model=model,
+        index=index,
+        history_item_ids_batch=histories,
+        item_to_index=bundle.item_to_index,
+        beam_size=3,
+        max_results=2,
+        device=torch.device("cpu"),
+    )
+
+    assert [
+        [beam_result.semantic_id for beam_result in row_results] for row_results in batch_results
+    ] == [
+        [beam_result.semantic_id for beam_result in row_results] for row_results in single_results
+    ]
 
 
 def _tiny_model(item_vocab_size: int, semantic_vocab_size: int) -> GenerativeRetriever:

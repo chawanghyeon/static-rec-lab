@@ -25,7 +25,7 @@ class GenerativeTrainingMetrics:
 
 
 def train_one_epoch(
-    model: GenerativeRetriever,
+    model: nn.Module,
     dataloader: Iterable[GenerativeBatch],
     optimizer: torch.optim.Optimizer,
     *,
@@ -69,7 +69,8 @@ def train_one_epoch(
                 "train "
                 f"batches={batch_index:,} "
                 f"examples={total_examples:,} "
-                f"loss={total_loss / max(total_tokens, 1):.6f}"
+                f"loss={total_loss / max(total_tokens, 1):.6f}",
+                flush=True,
             )
 
     return _aggregate_metrics(
@@ -83,7 +84,7 @@ def train_one_epoch(
 
 @torch.no_grad()
 def evaluate_model(
-    model: GenerativeRetriever,
+    model: nn.Module,
     dataloader: Iterable[GenerativeBatch],
     *,
     device: torch.device,
@@ -122,7 +123,8 @@ def evaluate_model(
                 "eval "
                 f"batches={batch_index:,} "
                 f"examples={total_examples:,} "
-                f"loss={total_loss / max(total_tokens, 1):.6f}"
+                f"loss={total_loss / max(total_tokens, 1):.6f}",
+                flush=True,
             )
 
     return _aggregate_metrics(

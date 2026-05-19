@@ -30,6 +30,7 @@ GENERATIVE_EPOCHS ?= 1
 GENERATIVE_BATCH_SIZE ?= 64
 GENERATIVE_LR ?= 0.001
 GENERATIVE_BEAM_SIZE ?= 50
+GENERATIVE_INFERENCE_BATCH_SIZE ?= 128
 DECODER_BENCHMARK_REPORT ?= reports/decoder_benchmark.md
 DECODER_BENCHMARK_BATCH_SIZES ?= 1 32 128 512
 SERVING_BENCHMARK_REPORT ?= reports/serving_benchmark.md
@@ -126,6 +127,7 @@ eval-generative-ranking:
 		--test-parquet $(PROCESSED_DIR)/test.parquet \
 		--report-path $(GENERATIVE_RANKING_REPORT) \
 		--beam-size $(GENERATIVE_BEAM_SIZE) \
+		--inference-batch-size $(GENERATIVE_INFERENCE_BATCH_SIZE) \
 		$(STATIC_DECODING_INDEX_CLI_ARG)
 
 benchmark-decoder:

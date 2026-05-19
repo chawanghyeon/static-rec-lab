@@ -14,6 +14,10 @@ MovieLens 32M 규모에서도 실제로 실행 가능한지 확인했습니다.
 - item co-occurrence baseline 학습 및 평가
 - Semantic ID 생성 및 검증
 
+이후 같은 `ml-32m` 산출물로 generative model 학습, constrained ranking 평가, decoder benchmark,
+serving benchmark까지 추가로 실행했습니다. 대표 수치는 이 문서 하단과 각 세부 리포트에
+정리했습니다.
+
 ## 데이터
 
 - dataset: MovieLens `ml-32m`
@@ -34,6 +38,11 @@ MovieLens 32M 규모에서도 실제로 실행 가능한지 확인했습니다.
 | baseline eval | `reports/ml_32m_baseline.md` 생성 | `414.35s` |
 | Semantic ID build | `artifacts/semantic_id/ml-32m/semantic_ids.json` 생성 | `141.64s` |
 | Semantic ID validate | 중복 없는 고정 길이 ID 검증 통과 | `<1s` |
+| static_decoding index build | `artifacts/semantic_id/ml-32m/static_decoding_index.npz` 생성 | `2.31s` |
+| Generative Retrieval train | `artifacts/generative/ml-32m/model.pt` 생성 | `3162.64s` |
+| Generative Retrieval ranking eval | `reports/ml_32m_generative_eval.md` 생성 | `576.29s` |
+| decoder benchmark | `reports/ml_32m_decoder_benchmark.md` 생성 | `9.05s` |
+| serving benchmark | `reports/ml_32m_serving_benchmark.md` 생성 | `28.42s` |
 
 ## 산출물 크기
 
@@ -80,6 +89,45 @@ MovieLens 32M 규모에서도 실제로 실행 가능한지 확인했습니다.
 - 모든 item에 Semantic ID가 부여되었습니다.
 - 모든 Semantic ID는 길이 4입니다.
 - 중복 Semantic ID는 없습니다.
+
+## Generative Retrieval
+
+자세한 결과는 `reports/ml_32m_generative.md`와
+`reports/ml_32m_generative_eval.md`에 기록했습니다.
+
+Teacher-forcing 평가:
+
+| split | examples | loss | token accuracy | sequence accuracy |
+| --- | ---: | ---: | ---: | ---: |
+| valid | 200,873 | 1.797266 | 0.409831 | 0.013222 |
+
+추천 ranking 평가:
+
+| split | k | Recall@K | NDCG@K | MRR@K |
+| --- | ---: | ---: | ---: | ---: |
+| valid | 10 | 0.111287 | 0.060276 | 0.044855 |
+| valid | 20 | 0.143888 | 0.068742 | 0.047294 |
+| test | 10 | 0.098195 | 0.054127 | 0.040806 |
+| test | 20 | 0.127978 | 0.061858 | 0.043031 |
+
+생성 품질:
+
+- valid invalid generation rate: `0.000000`
+- test invalid generation rate: `0.000000`
+- ranking inference batch size: `128`
+- valid elapsed: `285,347.85 ms`
+- test elapsed: `285,259.78 ms`
+
+## Decoder와 serving
+
+- `ml-32m` decoder benchmark batch 512 기준 검증용 matrix decoder는 naive trie 대비 `6.66x`
+  빠르게 mask를 생성했습니다.
+- `static_decoding` PyTorch/JAX candidate gather와 sparse transition harness는 모두 후보 일치
+  및 생성 ID validity 검증을 통과했습니다.
+- `ml-32m` model-backed serving benchmark는 CPU 기준 batch 128 평균 latency `11.3422 ms`,
+  p95 latency `14.0557 ms`, throughput `88.15 req/s`를 기록했습니다.
+- MPS는 full ranking 평가에는 유효했지만, 작은 단건 serving 호출에서는 device 전환 비용 때문에
+  CPU보다 느렸습니다.
 
 ## 경고 처리
 

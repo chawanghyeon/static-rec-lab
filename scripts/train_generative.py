@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 from collections.abc import Iterable
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import pandas as pd
 import torch
@@ -62,6 +62,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dim-feedforward", type=int, default=128)
     parser.add_argument("--dropout", type=float, default=0.1)
     parser.add_argument("--device", choices=["auto", "cpu", "cuda", "mps"], default="auto")
+    parser.add_argument(
+        "--compile-model",
+        action="store_true",
+        help="torch.compile로 학습 모델을 컴파일합니다.",
+    )
     parser.add_argument("--random-seed", type=int, default=42)
     return parser.parse_args()
 
@@ -154,20 +159,23 @@ def main() -> None:
             dropout=args.dropout,
         )
     ).to(device)
+    train_model = (
+        cast(torch.nn.Module, cast(Any, torch.compile)(model)) if args.compile_model else model
+    )
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate)
 
     train_metrics = None
     valid_metrics = None
     for epoch in range(1, args.epochs + 1):
         train_metrics = train_one_epoch(
-            model,
+            train_model,
             train_loader,
             optimizer,
             device=device,
             log_every_batches=args.log_every_batches,
         )
         valid_metrics = evaluate_model(
-            model,
+            train_model,
             valid_loader,
             device=device,
             log_every_batches=args.log_every_batches,

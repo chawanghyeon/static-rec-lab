@@ -6,6 +6,7 @@ from recsys.evaluation.generative import (
     GenerativeRecommendationResult,
     build_static_decoding_index,
     evaluate_generative_ranking,
+    recommend_batch_with_constrained_generation,
     recommend_with_constrained_generation,
     write_generative_ranking_report,
 )
@@ -34,6 +35,7 @@ __all__ = [
     "ndcg_at_k",
     "recall_at_k",
     "reciprocal_rank",
+    "recommend_batch_with_constrained_generation",
     "recommend_with_constrained_generation",
     "write_generative_ranking_report",
 ]

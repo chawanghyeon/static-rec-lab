@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
+import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
 import torch
@@ -148,11 +149,8 @@ class GenerativeParquetBatchIterableDataset(IterableDataset[GenerativeBatch]):
             raise ValueError(msg)
 
         self._path = Path(path)
-        self._item_to_index = dict(item_to_index)
-        self._target_tokens_by_item = {
-            item_id: tuple(token + SEMANTIC_TOKEN_OFFSET for token in semantic_id)
-            for item_id, semantic_id in codec.item_to_semantic_id.items()
-        }
+        self._item_index_lookup = _build_item_index_lookup(item_to_index)
+        self._target_token_lookup = _build_target_token_lookup(codec)
         self._batch_size = batch_size
         self._max_examples = max_examples
         self._parquet_batch_size = parquet_batch_size
@@ -164,8 +162,6 @@ class GenerativeParquetBatchIterableDataset(IterableDataset[GenerativeBatch]):
             raise RuntimeError(msg)
 
         yielded = 0
-        history_batch: list[tuple[int, ...]] = []
-        target_batch: list[tuple[int, ...]] = []
         pq_module = cast(Any, pq)
         parquet_file = pq_module.ParquetFile(self._path)
 
@@ -173,27 +169,34 @@ class GenerativeParquetBatchIterableDataset(IterableDataset[GenerativeBatch]):
             batch_size=self._parquet_batch_size,
             columns=["history_item_ids", "target_item_id"],
         ):
-            history_values = record_batch.column("history_item_ids").to_pylist()
-            target_values = record_batch.column("target_item_id").to_pylist()
-            for history, target in zip(history_values, target_values, strict=True):
-                target_tokens = self._target_tokens_by_item.get(int(cast(Any, target)))
-                if target_tokens is None:
-                    continue
+            history_item_ids, history_padding_mask, target_token_ids = (
+                _record_batch_to_generative_arrays(
+                    record_batch,
+                    item_index_lookup=self._item_index_lookup,
+                    target_token_lookup=self._target_token_lookup,
+                )
+            )
+            if target_token_ids.shape[0] == 0:
+                continue
 
-                history_batch.append(_map_history_to_indices(history, self._item_to_index))
-                target_batch.append(target_tokens)
-                yielded += 1
-                if len(history_batch) >= self._batch_size:
-                    yield _collate_history_and_targets(history_batch, target_batch)
-                    history_batch = []
-                    target_batch = []
-                if self._max_examples is not None and yielded >= self._max_examples:
-                    if history_batch:
-                        yield _collate_history_and_targets(history_batch, target_batch)
+            if self._max_examples is not None:
+                remaining = self._max_examples - yielded
+                if remaining <= 0:
                     return
+                history_item_ids = history_item_ids[:remaining]
+                history_padding_mask = history_padding_mask[:remaining]
+                target_token_ids = target_token_ids[:remaining]
 
-        if history_batch:
-            yield _collate_history_and_targets(history_batch, target_batch)
+            for start in range(0, target_token_ids.shape[0], self._batch_size):
+                end = start + self._batch_size
+                yield _arrays_to_generative_batch(
+                    history_item_ids[start:end],
+                    history_padding_mask[start:end],
+                    target_token_ids[start:end],
+                )
+                yielded += int(target_token_ids[start:end].shape[0])
+                if self._max_examples is not None and yielded >= self._max_examples:
+                    return
 
 
 def build_generative_dataset(
@@ -257,6 +260,35 @@ def build_item_index_from_codec(codec: SemanticIdCodec) -> dict[int, int]:
     return {
         item_id: index for index, item_id in enumerate(sorted(codec.item_to_semantic_id), start=2)
     }
+
+
+def _build_item_index_lookup(item_to_index: Mapping[int, int]) -> np.ndarray:
+    if not item_to_index:
+        return np.asarray([UNK_ITEM_INDEX], dtype=np.int64)
+    max_item_id = max(int(item_id) for item_id in item_to_index)
+    lookup = np.full(max_item_id + 1, UNK_ITEM_INDEX, dtype=np.int64)
+    for item_id, item_index in item_to_index.items():
+        normalized_item_id = int(item_id)
+        if normalized_item_id >= 0:
+            lookup[normalized_item_id] = int(item_index)
+    return lookup
+
+
+def _build_target_token_lookup(codec: SemanticIdCodec) -> np.ndarray:
+    max_item_id = max(int(item_id) for item_id in codec.item_to_semantic_id)
+    lookup = np.full(
+        (max_item_id + 1, codec.semantic_id_length),
+        -1,
+        dtype=np.int64,
+    )
+    for item_id, semantic_id in codec.item_to_semantic_id.items():
+        normalized_item_id = int(item_id)
+        if normalized_item_id >= 0:
+            lookup[normalized_item_id] = np.asarray(
+                [token + SEMANTIC_TOKEN_OFFSET for token in semantic_id],
+                dtype=np.int64,
+            )
+    return lookup
 
 
 def infer_semantic_vocab_size(codec: SemanticIdCodec) -> int:
@@ -326,6 +358,69 @@ def _collate_history_and_targets(
         history_padding_mask=history_padding_mask,
         decoder_input_ids=decoder_input_ids,
         target_token_ids=target_token_tensor,
+    )
+
+
+def _record_batch_to_generative_arrays(
+    record_batch: Any,
+    *,
+    item_index_lookup: np.ndarray,
+    target_token_lookup: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    history_column = record_batch.column("history_item_ids")
+    target_item_ids = np.asarray(
+        record_batch.column("target_item_id").to_numpy(zero_copy_only=False),
+        dtype=np.int64,
+    )
+    num_rows = len(target_item_ids)
+    if num_rows == 0:
+        empty_history = np.empty((0, 1), dtype=np.int64)
+        empty_padding = np.empty((0, 1), dtype=bool)
+        empty_targets = np.empty((0, target_token_lookup.shape[1]), dtype=np.int64)
+        return empty_history, empty_padding, empty_targets
+
+    offsets = np.asarray(history_column.offsets.to_numpy(zero_copy_only=False), dtype=np.int64)
+    values = np.asarray(history_column.values.to_numpy(zero_copy_only=False), dtype=np.int64)
+    lengths = offsets[1:] - offsets[:-1]
+    max_history_length = max(int(lengths.max(initial=0)), 1)
+    history_item_ids = np.full((num_rows, max_history_length), PAD_ITEM_INDEX, dtype=np.int64)
+    history_padding_mask = np.ones((num_rows, max_history_length), dtype=bool)
+
+    if values.size:
+        mapped_values = np.full(values.shape, UNK_ITEM_INDEX, dtype=np.int64)
+        in_lookup = (values >= 0) & (values < item_index_lookup.shape[0])
+        mapped_values[in_lookup] = item_index_lookup[values[in_lookup]]
+        row_indices = np.repeat(np.arange(num_rows, dtype=np.int64), lengths)
+        col_indices = np.arange(values.size, dtype=np.int64) - np.repeat(offsets[:-1], lengths)
+        history_item_ids[row_indices, col_indices] = mapped_values
+        history_padding_mask[row_indices, col_indices] = False
+
+    in_target_lookup = (target_item_ids >= 0) & (target_item_ids < target_token_lookup.shape[0])
+    safe_target_item_ids = np.where(in_target_lookup, target_item_ids, 0)
+    target_token_ids = target_token_lookup[safe_target_item_ids]
+    valid_targets = in_target_lookup & (target_token_ids[:, 0] >= 0)
+    if not bool(valid_targets.all()):
+        history_item_ids = history_item_ids[valid_targets]
+        history_padding_mask = history_padding_mask[valid_targets]
+        target_token_ids = target_token_ids[valid_targets]
+
+    return history_item_ids, history_padding_mask, target_token_ids
+
+
+def _arrays_to_generative_batch(
+    history_item_ids: np.ndarray,
+    history_padding_mask: np.ndarray,
+    target_token_ids: np.ndarray,
+) -> GenerativeBatch:
+    target_tensor = torch.as_tensor(target_token_ids, dtype=torch.long)
+    decoder_input_ids = torch.empty_like(target_tensor)
+    decoder_input_ids[:, 0] = BOS_TOKEN_ID
+    decoder_input_ids[:, 1:] = target_tensor[:, :-1]
+    return GenerativeBatch(
+        history_item_ids=torch.as_tensor(history_item_ids, dtype=torch.long),
+        history_padding_mask=torch.as_tensor(history_padding_mask, dtype=torch.bool),
+        decoder_input_ids=decoder_input_ids,
+        target_token_ids=target_tensor,
     )
 
 

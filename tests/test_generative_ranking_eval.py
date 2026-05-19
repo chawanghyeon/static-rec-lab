@@ -9,6 +9,7 @@ from recsys.decoding.static_decoding import StaticDecodingIndex
 from recsys.evaluation import (
     GenerativeRankingEvaluation,
     evaluate_generative_ranking,
+    recommend_batch_with_constrained_generation,
     recommend_with_constrained_generation,
     write_generative_ranking_report,
 )
@@ -82,6 +83,52 @@ def test_evaluate_generative_ranking_loads_static_decoding_index_artifact(
     assert evaluation.metrics_by_k[1].recall == pytest.approx(1.0)
 
 
+def test_evaluate_generative_ranking_supports_batched_inference() -> None:
+    codec = _codec()
+    frame = pd.DataFrame(
+        {
+            "history_item_ids": [[10], [30]],
+            "target_item_id": [20, 999],
+        }
+    )
+    bundle = build_generative_dataset(_training_frame(), codec)
+
+    single_evaluation = evaluate_generative_ranking(
+        model=cast(GenerativeRetriever, _FakeGenerativeModel()),
+        item_to_index=bundle.item_to_index,
+        codec=codec,
+        eval_frame=frame,
+        split_name="valid",
+        cutoffs=(1, 2),
+        beam_size=3,
+        device=torch.device("cpu"),
+        inference_batch_size=1,
+    )
+    batched_evaluation = evaluate_generative_ranking(
+        model=cast(GenerativeRetriever, _FakeGenerativeModel()),
+        item_to_index=bundle.item_to_index,
+        codec=codec,
+        eval_frame=frame,
+        split_name="valid",
+        cutoffs=(1, 2),
+        beam_size=3,
+        device=torch.device("cpu"),
+        inference_batch_size=2,
+    )
+
+    assert batched_evaluation.num_examples == single_evaluation.num_examples
+    assert batched_evaluation.generated_sequences == single_evaluation.generated_sequences
+    assert batched_evaluation.invalid_generation_rate == pytest.approx(
+        single_evaluation.invalid_generation_rate
+    )
+    assert batched_evaluation.metrics_by_k[1].recall == pytest.approx(
+        single_evaluation.metrics_by_k[1].recall
+    )
+    assert batched_evaluation.metrics_by_k[2].ndcg == pytest.approx(
+        single_evaluation.metrics_by_k[2].ndcg
+    )
+
+
 def test_recommend_with_constrained_generation_filters_history_items() -> None:
     codec = _codec()
     bundle = build_generative_dataset(_training_frame(), codec)
@@ -100,6 +147,44 @@ def test_recommend_with_constrained_generation_filters_history_items() -> None:
     assert result.item_ids[0] == 30
     assert 20 not in result.item_ids
     assert result.history_filtered_items == 1
+
+
+def test_recommend_batch_with_constrained_generation_matches_single_results() -> None:
+    codec = _codec()
+    bundle = build_generative_dataset(_training_frame(), codec)
+    decoder = StaticDecodingIndex.from_codec(codec, dense_lookup_layers=1)
+    model = cast(GenerativeRetriever, _FakeGenerativeModel())
+
+    single_results = [
+        recommend_with_constrained_generation(
+            model=model,
+            decoder=decoder,
+            codec=codec,
+            history_item_ids=history,
+            item_to_index=bundle.item_to_index,
+            k=2,
+            beam_size=3,
+            device=torch.device("cpu"),
+        )
+        for history in ([20], [10])
+    ]
+    batch_results = recommend_batch_with_constrained_generation(
+        model=model,
+        decoder=decoder,
+        codec=codec,
+        history_item_ids_batch=([20], [10]),
+        item_to_index=bundle.item_to_index,
+        k=2,
+        beam_size=3,
+        device=torch.device("cpu"),
+    )
+
+    assert [result.item_ids for result in batch_results] == [
+        result.item_ids for result in single_results
+    ]
+    assert [result.generated_sequences for result in batch_results] == [
+        result.generated_sequences for result in single_results
+    ]
 
 
 def test_write_generative_ranking_report(tmp_path: Path) -> None:

@@ -136,6 +136,7 @@ class GenerativeRetriever(nn.Module):
             tgt,
             memory,
             tgt_mask=target_mask,
+            tgt_is_causal=True,
             memory_key_padding_mask=history_padding_mask,
         )
         return cast(torch.Tensor, self.output_projection(hidden))

@@ -32,22 +32,25 @@ Generative Retrieval 추천 시스템입니다.
 
 ## 핵심 결과
 
-MovieLens Latest Small 기준 결과입니다.
+MovieLens 32M 기준 결과입니다. Latest Small은 개발용 smoke test로만 사용하고,
+최종 성능 수치는 `ml-32m` 산출물을 기준으로 정리했습니다.
 
 | 항목 | 결과 |
 | --- | ---: |
-| Generative Retrieval Recall@20 | 0.072131 |
-| Generative Retrieval NDCG@20 | 0.025476 |
+| Generative Retrieval Recall@20 | 0.127978 |
+| Generative Retrieval NDCG@20 | 0.061858 |
+| Generative Retrieval MRR@20 | 0.043031 |
 | test invalid generation rate | 0.000000 |
-| decoder benchmark batch 512 speedup | 3.37x |
-| serving benchmark batch 128 평균 latency | 4.6436 ms |
-| serving benchmark batch 128 throughput | 215.32 req/s |
+| decoder benchmark batch 512 speedup | 6.66x |
+| serving benchmark batch 128 평균 latency | 11.3422 ms |
+| serving benchmark batch 128 throughput | 88.15 req/s |
 
 해석:
 
 - 현재 generative model은 작은 Transformer를 1 epoch 학습한 baseline입니다.
-- item co-occurrence baseline보다 ranking 성능은 낮지만, constrained decoding 적용 후
-  존재하지 않는 Semantic ID 생성률을 0으로 유지했습니다.
+- `ml-32m` test split에서 Popularity baseline의 Recall@20 `0.058100`, item co-occurrence
+  baseline의 Recall@20 `0.099016`보다 높은 `0.127978`을 기록했습니다.
+- constrained decoding 적용 후 존재하지 않는 Semantic ID 생성률을 0으로 유지했습니다.
 - 이 프로젝트의 핵심 성과는 추천 정확도 1등이 아니라, Generative Retrieval에서 constrained
   decoding을 실제 추천 pipeline과 benchmark, serving까지 연결한 것입니다.
 
@@ -72,29 +75,88 @@ MovieLens Latest Small 기준 결과입니다.
 uv sync --group dev
 make lint
 make test
+MOVIELENS_DATASET=ml-32m \
+MOVIELENS_URL=https://files.grouplens.org/datasets/movielens/ml-32m.zip \
 make download-movielens
-RAW_RATINGS=data/raw/ml-latest-small/ratings.csv make preprocess
+RAW_RATINGS=data/raw/ml-32m/ratings.csv \
+PROCESSED_DIR=data/processed/ml-32m \
+make preprocess
+
+PROCESSED_DIR=data/processed/ml-32m \
+BASELINE_DIR=artifacts/baseline/ml-32m \
 make train-baseline
+
+PROCESSED_DIR=data/processed/ml-32m \
+BASELINE_DIR=artifacts/baseline/ml-32m \
+BASELINE_REPORT=reports/ml_32m_baseline.md \
 make eval-baseline
+
+PROCESSED_DIR=data/processed/ml-32m \
+SEMANTIC_ID_PATH=artifacts/semantic_id/ml-32m/semantic_ids.json \
+SEMANTIC_ID_REPORT=reports/ml_32m_semantic_id.md \
+SEMANTIC_ID_BRANCHING_FACTOR=32 \
 make build-semantic-ids
+
+SEMANTIC_ID_PATH=artifacts/semantic_id/ml-32m/semantic_ids.json \
 make validate-semantic-ids
+
+SEMANTIC_ID_PATH=artifacts/semantic_id/ml-32m/semantic_ids.json \
+STATIC_DECODING_INDEX_PATH=artifacts/semantic_id/ml-32m/static_decoding_index.npz \
 make build-static-decoding-index
-make train-generative
-make eval-generative
-make eval-generative-ranking
-make benchmark-decoder
+
+uv run python scripts/train_generative.py \
+  --train-parquet data/processed/ml-32m/train.parquet \
+  --valid-parquet data/processed/ml-32m/valid.parquet \
+  --semantic-id-path artifacts/semantic_id/ml-32m/semantic_ids.json \
+  --output-path artifacts/generative/ml-32m/model.pt \
+  --epochs 1 \
+  --batch-size 4096 \
+  --learning-rate 0.001 \
+  --max-history-length 50 \
+  --streaming \
+  --parquet-batch-size 131072 \
+  --device auto \
+  --log-every-batches 250
+
+uv run python scripts/eval_generative_ranking.py \
+  --checkpoint-path artifacts/generative/ml-32m/model.pt \
+  --semantic-id-path artifacts/semantic_id/ml-32m/semantic_ids.json \
+  --valid-parquet data/processed/ml-32m/valid.parquet \
+  --test-parquet data/processed/ml-32m/test.parquet \
+  --report-path reports/ml_32m_generative_eval.md \
+  --beam-size 20 \
+  --inference-batch-size 128 \
+  --static-decoding-index-path artifacts/semantic_id/ml-32m/static_decoding_index.npz \
+  --device auto
+
+uv run python scripts/benchmark_decoder.py \
+  --semantic-id-path artifacts/semantic_id/ml-32m/semantic_ids.json \
+  --report-path reports/ml_32m_decoder_benchmark.md \
+  --batch-sizes 1 32 128 512
 ```
 
 model-backed serving benchmark:
 
 ```bash
-STATIC_REC_GENERATIVE_CHECKPOINT=artifacts/generative/model.pt \
-STATIC_REC_SEMANTIC_ID_PATH=artifacts/semantic_id/semantic_ids.json \
-STATIC_REC_STATIC_DECODING_INDEX_PATH=artifacts/semantic_id/static_decoding_index.npz \
-STATIC_REC_USER_HISTORY_PARQUET=data/processed/valid.parquet \
+STATIC_REC_GENERATIVE_CHECKPOINT=artifacts/generative/ml-32m/model.pt \
+STATIC_REC_SEMANTIC_ID_PATH=artifacts/semantic_id/ml-32m/semantic_ids.json \
+STATIC_REC_STATIC_DECODING_INDEX_PATH=artifacts/semantic_id/ml-32m/static_decoding_index.npz \
+STATIC_REC_USER_HISTORY_PARQUET=data/processed/ml-32m/valid.parquet \
+STATIC_REC_DEVICE=cpu \
 SERVING_BENCHMARK_SERVICE=environment \
+SERVING_BENCHMARK_REPORT=reports/ml_32m_serving_benchmark.md \
 make benchmark-serving
 ```
+
+## 대표 리포트
+
+- [MovieLens 32M 대용량 검증](ml_32m_validation.md)
+- [ml-32m baseline](ml_32m_baseline.md)
+- [ml-32m Semantic ID](ml_32m_semantic_id.md)
+- [ml-32m Generative Retrieval teacher-forcing](ml_32m_generative.md)
+- [ml-32m Generative Retrieval ranking](ml_32m_generative_eval.md)
+- [ml-32m decoder benchmark](ml_32m_decoder_benchmark.md)
+- [ml-32m serving benchmark](ml_32m_serving_benchmark.md)
 
 ## 산출물 정책
 

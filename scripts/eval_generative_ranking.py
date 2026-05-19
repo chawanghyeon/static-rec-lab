@@ -43,6 +43,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cutoffs", type=int, nargs="+", default=[10, 20])
     parser.add_argument("--beam-size", type=int, default=50)
     parser.add_argument(
+        "--inference-batch-size",
+        type=int,
+        default=128,
+        help="추천 ranking 생성 시 한 번에 처리할 query 수",
+    )
+    parser.add_argument(
         "--static-decoding-index-path",
         type=Path,
         default=None,
@@ -58,6 +64,8 @@ def main() -> None:
     args = parse_args()
     if args.beam_size < 1:
         raise ValueError("beam-size는 1 이상이어야 합니다.")
+    if args.inference_batch_size < 1:
+        raise ValueError("inference-batch-size는 1 이상이어야 합니다.")
 
     device = _resolve_device(args.device)
     model, item_to_index = load_checkpoint(args.checkpoint_path, device=device)
@@ -76,6 +84,7 @@ def main() -> None:
             beam_size=args.beam_size,
             device=device,
             static_decoding_index_path=args.static_decoding_index_path,
+            inference_batch_size=args.inference_batch_size,
         ),
         evaluate_generative_ranking(
             model=model,
@@ -87,6 +96,7 @@ def main() -> None:
             beam_size=args.beam_size,
             device=device,
             static_decoding_index_path=args.static_decoding_index_path,
+            inference_batch_size=args.inference_batch_size,
         ),
     ]
     report_path = write_generative_ranking_report(
@@ -96,6 +106,7 @@ def main() -> None:
         semantic_id_path=args.semantic_id_path,
         beam_size=args.beam_size,
         cutoffs=args.cutoffs,
+        inference_batch_size=args.inference_batch_size,
         decoder_name=STATIC_DECODING_DECODER_NAME,
         static_decoding_index_path=args.static_decoding_index_path,
     )

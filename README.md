@@ -24,12 +24,14 @@ decoding을 제약하는 전체 흐름을 구현하는 것입니다.
    한 페이지로 정리했습니다.
 2. [static_decoding 통합 리포트](reports/static_decoding_integration.md): YouTube
    `static_decoding` package를 어떤 경로로 직접 호출하는지 정리했습니다.
-3. [decoder benchmark](reports/decoder_benchmark.md): naive trie, 검증용 matrix,
+3. [MovieLens 32M 검증](reports/ml_32m_validation.md): 대용량 전처리, baseline,
+   Semantic ID 생성 결과를 확인합니다.
+4. [ml-32m decoder benchmark](reports/ml_32m_decoder_benchmark.md): naive trie, 검증용 matrix,
    `static_decoding` PyTorch/JAX kernel 및 harness의 validity와 latency를 비교합니다.
-4. [Generative Retrieval 추천 평가](reports/generative_eval.md): constrained decoding을 적용한
-   추천 ranking 성능과 invalid generation rate를 확인합니다.
-5. [Serving benchmark](reports/serving_benchmark.md): model-backed recommendation service의
-   latency를 확인합니다.
+5. [ml-32m Generative Retrieval 추천 평가](reports/ml_32m_generative_eval.md):
+   constrained decoding을 적용한 추천 ranking 성능과 invalid generation rate를 확인합니다.
+6. [ml-32m Serving benchmark](reports/ml_32m_serving_benchmark.md): model-backed recommendation
+   service의 latency를 확인합니다.
 
 최소 검증 명령:
 
@@ -60,8 +62,8 @@ Semantic ID 생성, Generative Retrieval 학습/평가 코드, naive trie constr
 `static_decoding` sparse transition decoder, decoder latency 및 throughput benchmark,
 constrained beam search, 학습 checkpoint 기반 API service와 mock service 경로까지 구현된
 상태입니다.
-MovieLens Latest Small 기준 generative checkpoint를 학습하고, 추천 ranking 평가와
-model-backed serving latency benchmark까지 리포트로 남긴 상태입니다.
+최종 포트폴리오 수치는 MovieLens 32M 기준으로 생성했습니다. Latest Small은 빠른 개발과
+smoke test 용도로만 남기고, README의 대표 성능 수치는 `ml-32m` 결과를 사용합니다.
 
 완료 기준:
 
@@ -84,33 +86,35 @@ make serve-api
 
 ## 실험 결과 요약
 
-MovieLens Latest Small 전처리 결과와 Semantic ID artifact를 사용해 Generative Retrieval
-모델을 1 epoch 학습했습니다. checkpoint 파일은 로컬 산출물로만 사용하며 Git에는 커밋하지
-않습니다.
+MovieLens 32M 전처리 결과와 Semantic ID artifact를 사용해 Generative Retrieval 모델을
+1 epoch 학습했습니다. checkpoint 파일은 로컬 산출물로만 사용하며 Git에는 커밋하지 않습니다.
 
 Teacher-forcing 평가:
 
 | split | examples | loss | token accuracy | sequence accuracy |
 | --- | ---: | ---: | ---: | ---: |
-| valid | 590 | 1.976591 | 0.356356 | 0.006780 |
+| valid | 200,873 | 1.797266 | 0.409831 | 0.013222 |
 
 추천 ranking 평가:
 
 | model | split | Recall@10 | Recall@20 | NDCG@10 | NDCG@20 | MRR@20 |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
-| Popularity | test | 0.029508 | 0.055738 | 0.013207 | 0.019912 | 0.010147 |
-| Item co-occurrence | test | 0.060656 | 0.098361 | 0.031351 | 0.040789 | 0.025138 |
-| Generative Retrieval + STATIC | test | 0.037705 | 0.072131 | 0.016930 | 0.025476 | 0.012989 |
+| Popularity | test | 0.035138 | 0.058100 | 0.016817 | 0.022527 | 0.012848 |
+| Item co-occurrence | test | 0.063748 | 0.099016 | 0.034091 | 0.042943 | 0.027565 |
+| Generative Retrieval + static_decoding | test | 0.098195 | 0.127978 | 0.054127 | 0.061858 | 0.043031 |
 
 생성 품질:
 
 - valid invalid generation rate: `0.000000`
 - test invalid generation rate: `0.000000`
-- test unknown targets: `24`
+- test unknown targets: `102`
+- full ranking inference: valid `285,347.85 ms`, test `285,259.78 ms`
+- ranking inference batch size: `128`
 
 Decoder benchmark:
 
-- batch size 512 기준 검증용 matrix mask 생성은 naive trie 대비 `3.37x` 빠릅니다.
+- `ml-32m` Semantic ID 84,259개, trie state 86,980개 기준으로 측정했습니다.
+- batch size 512 기준 검증용 matrix mask 생성은 naive trie 대비 `6.66x` 빠릅니다.
 - 모든 sampled state batch에서 naive trie와 검증용 matrix decoder mask 일치를 확인했습니다.
 - `static_decoding.decoding_pt.generate_and_apply_logprobs_mask` 후보 추출과
   `static_decoding.decoding_pt.sparse_transition_torch` harness도 별도 benchmark에서 호출합니다.
@@ -119,17 +123,19 @@ Decoder benchmark:
 
 Serving benchmark:
 
-- STATIC decoder를 사용하는 model-backed service 기준 `k=20`, user_id `1..10000`,
-  batch size `1, 32, 128`을 측정했습니다.
-- batch size 128 기준 평균 latency는 `4.6436 ms`, p95 latency는 `10.1986 ms`,
-  throughput은 `215.32 req/s`입니다.
+- `static_decoding` decoder를 사용하는 `ml-32m` model-backed service 기준 `k=20`,
+  user_id `1..10000`, batch size `1, 32, 128`을 측정했습니다.
+- batch size 128 기준 평균 latency는 `11.3422 ms`, p95 latency는 `14.0557 ms`,
+  throughput은 `88.15 req/s`입니다.
+- 요청 단위 serving benchmark에서는 MPS보다 CPU가 더 빨랐습니다. 작은 단건 추론은 device
+  전환 비용이 커서 CPU 대표 수치를 사용합니다.
 
 해석:
 
-- 현재 generative model은 1 epoch의 작은 Transformer baseline이므로 item co-occurrence
-  baseline보다 추천 정확도는 낮습니다.
-- 대신 constrained decoding 적용 후 invalid generation rate가 0으로 유지되어, 존재하지 않는
-  item Semantic ID를 추천하지 않는다는 핵심 목표를 만족합니다.
+- 현재 generative model은 1 epoch의 작은 Transformer baseline이지만, `ml-32m`에서는
+  Popularity와 item co-occurrence baseline보다 높은 Recall@20/NDCG@20을 기록했습니다.
+- constrained decoding 적용 후 invalid generation rate가 0으로 유지되어, 존재하지 않는
+  item Semantic ID를 추천하지 않는다는 핵심 목표도 만족합니다.
 - portfolio 관점에서 핵심 비교 대상은 추천 정확도 1등이 아니라, baseline 추천 성능과
   constrained decoding latency/validity를 함께 제시하는 것입니다.
 
@@ -165,8 +171,8 @@ make format
 `ratings.csv`를 사용자별 시간순 interaction sequence로 정렬한 뒤 sequential recommendation용
 prefix-target pair로 변환합니다.
 
-실제 데이터는 Git에 커밋하지 않습니다. 대신 GroupLens의 MovieLens Latest Small 데이터를
-로컬 `data/raw/` 아래에 다운로드해서 사용합니다.
+실제 데이터는 Git에 커밋하지 않습니다. 기본 명령은 빠른 개발용 MovieLens Latest Small을
+받지만, 최종 포트폴리오 수치는 MovieLens 32M으로 생성했습니다.
 
 다운로드:
 
@@ -180,6 +186,14 @@ make download-movielens
 data/raw/ml-latest-small/ratings.csv
 ```
 
+MovieLens 32M 다운로드:
+
+```bash
+MOVIELENS_DATASET=ml-32m \
+MOVIELENS_URL=https://files.grouplens.org/datasets/movielens/ml-32m.zip \
+make download-movielens
+```
+
 실행:
 
 ```bash
@@ -191,6 +205,16 @@ RAW_RATINGS=data/raw/ml-latest-small/ratings.csv make preprocess
 ```bash
 RAW_RATINGS=data/raw/ml-latest-small/ratings.csv \
 PROCESSED_DIR=data/processed \
+MIN_INTERACTIONS=5 \
+MAX_HISTORY_LENGTH=50 \
+make preprocess
+```
+
+MovieLens 32M 전처리:
+
+```bash
+RAW_RATINGS=data/raw/ml-32m/ratings.csv \
+PROCESSED_DIR=data/processed/ml-32m \
 MIN_INTERACTIONS=5 \
 MAX_HISTORY_LENGTH=50 \
 make preprocess
@@ -338,13 +362,15 @@ make eval-generative-ranking
 
 ranking 평가는 `static_decoding` PyTorch sparse mask kernel을 사용하는 decoder로 실행됩니다.
 로컬 naive trie와 matrix decoder는 정확성 확인 및 벤치마크 비교용으로만 사용합니다.
+`make eval-generative-ranking`의 기본 inference batch size는 `128`입니다.
 
 `artifacts/semantic_id/static_decoding_index.npz`가 존재하면 `make eval-generative-ranking`은
 해당 static_decoding index artifact를 자동으로 로드합니다. 직접 지정할 수도 있습니다.
 
 ```bash
 uv run python scripts/eval_generative_ranking.py \
-  --static-decoding-index-path artifacts/semantic_id/static_decoding_index.npz
+  --static-decoding-index-path artifacts/semantic_id/static_decoding_index.npz \
+  --inference-batch-size 128
 ```
 
 생성 파일:
@@ -353,6 +379,35 @@ uv run python scripts/eval_generative_ranking.py \
 artifacts/generative/model.pt
 reports/generative.md
 reports/generative_eval.md
+```
+
+MovieLens 32M 최종 학습/평가 예시:
+
+```bash
+uv run python scripts/train_generative.py \
+  --train-parquet data/processed/ml-32m/train.parquet \
+  --valid-parquet data/processed/ml-32m/valid.parquet \
+  --semantic-id-path artifacts/semantic_id/ml-32m/semantic_ids.json \
+  --output-path artifacts/generative/ml-32m/model.pt \
+  --epochs 1 \
+  --batch-size 4096 \
+  --learning-rate 0.001 \
+  --max-history-length 50 \
+  --streaming \
+  --parquet-batch-size 131072 \
+  --device auto \
+  --log-every-batches 250
+
+uv run python scripts/eval_generative_ranking.py \
+  --checkpoint-path artifacts/generative/ml-32m/model.pt \
+  --semantic-id-path artifacts/semantic_id/ml-32m/semantic_ids.json \
+  --valid-parquet data/processed/ml-32m/valid.parquet \
+  --test-parquet data/processed/ml-32m/test.parquet \
+  --report-path reports/ml_32m_generative_eval.md \
+  --beam-size 20 \
+  --inference-batch-size 128 \
+  --static-decoding-index-path artifacts/semantic_id/ml-32m/static_decoding_index.npz \
+  --device auto
 ```
 
 현재 모델 구현은 학습/평가 루프, checkpoint format, `static_decoding` 기반 constrained
@@ -411,6 +466,15 @@ index.allowed_next_tokens([12, 4])
 reports/decoder_benchmark.md
 ```
 
+MovieLens 32M Semantic ID 기준 benchmark:
+
+```bash
+uv run python scripts/benchmark_decoder.py \
+  --semantic-id-path artifacts/semantic_id/ml-32m/semantic_ids.json \
+  --report-path reports/ml_32m_decoder_benchmark.md \
+  --batch-sizes 1 32 128 512
+```
+
 ## Serving 벤치마크
 
 Recommendation API의 service layer를 직접 호출해 사용자별 추천 생성 latency를 측정합니다.
@@ -433,10 +497,24 @@ SERVING_BENCHMARK_SERVICE=environment \
 make benchmark-serving
 ```
 
+MovieLens 32M checkpoint 기준:
+
+```bash
+STATIC_REC_GENERATIVE_CHECKPOINT=artifacts/generative/ml-32m/model.pt \
+STATIC_REC_SEMANTIC_ID_PATH=artifacts/semantic_id/ml-32m/semantic_ids.json \
+STATIC_REC_STATIC_DECODING_INDEX_PATH=artifacts/semantic_id/ml-32m/static_decoding_index.npz \
+STATIC_REC_USER_HISTORY_PARQUET=data/processed/ml-32m/valid.parquet \
+STATIC_REC_DEVICE=cpu \
+SERVING_BENCHMARK_SERVICE=environment \
+SERVING_BENCHMARK_REPORT=reports/ml_32m_serving_benchmark.md \
+make benchmark-serving
+```
+
 생성 파일:
 
 ```text
 reports/serving_benchmark.md
+reports/ml_32m_serving_benchmark.md
 ```
 
 ## Recommendation API
@@ -534,8 +612,9 @@ Constrained decoding:
 Generative model:
 
 - 현재 모델은 작은 Transformer encoder-decoder를 1 epoch 학습한 baseline입니다.
-- 추천 정확도는 item co-occurrence baseline보다 낮지만, constrained decoding 적용 후 invalid
-  generation rate가 0으로 유지됩니다.
+- `ml-32m` 최종 평가에서는 Popularity와 item co-occurrence baseline보다 높은 ranking 성능을
+  기록했습니다. 다만 모델 크기와 학습 epoch는 아직 포트폴리오 검증용 baseline 수준입니다.
+- constrained decoding 적용 후 invalid generation rate가 0으로 유지됩니다.
 - 이 프로젝트의 핵심은 SOTA 추천 정확도가 아니라, generative retrieval에서 존재하지 않는 item
   sequence 생성을 막고 그 latency/validity를 측정하는 것입니다.
 
@@ -549,7 +628,7 @@ Serving benchmark:
 ## 한계와 다음 개선
 
 - Generative model은 작은 설정으로 1 epoch만 학습했습니다. 더 긴 학습, larger model, learning
-  rate schedule, negative sampling을 적용하면 ranking 품질을 더 확인할 수 있습니다.
+  rate schedule을 적용하면 ranking 품질을 더 확인할 수 있습니다.
 - Semantic ID는 interaction embedding 기반입니다. 영화 metadata, text embedding, collaborative
   embedding을 결합하면 token hierarchy 품질을 개선할 수 있습니다.
 - 현재 ranking 평가는 beam search 결과만 사용합니다. score calibration, diversity constraint,
