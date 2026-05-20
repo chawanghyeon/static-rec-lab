@@ -18,7 +18,7 @@ from recsys.decoding import (
 )
 from recsys.decoding.naive_trie import SemanticIdTrie
 from recsys.semantic_id import SemanticIdCodec
-from scripts.build_static_decoding_index import resolve_dense_lookup_layers
+from scripts.semantic_id import resolve_dense_lookup_layers
 
 
 def test_static_decoding_dependency_entrypoints_are_available() -> None:

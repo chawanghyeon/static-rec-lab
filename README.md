@@ -68,19 +68,8 @@ smoke test 용도로만 남기고, README의 대표 성능 수치는 `ml-32m` �
 완료 기준:
 
 ```bash
-make lint
-make test
-make format
-make train-baseline
-make eval-baseline
-make build-semantic-ids
-make validate-semantic-ids
-make build-static-decoding-index
-make train-generative
-make eval-generative
-make eval-generative-ranking
-make benchmark-decoder
-make benchmark-serving
+make check
+make reproduce-ml32m
 make serve-api
 ```
 
@@ -189,9 +178,7 @@ data/raw/ml-latest-small/ratings.csv
 MovieLens 32M 다운로드:
 
 ```bash
-MOVIELENS_DATASET=ml-32m \
-MOVIELENS_URL=https://files.grouplens.org/datasets/movielens/ml-32m.zip \
-make download-movielens
+make download-ml32m
 ```
 
 실행:
@@ -213,11 +200,7 @@ make preprocess
 MovieLens 32M 전처리:
 
 ```bash
-RAW_RATINGS=data/raw/ml-32m/ratings.csv \
-PROCESSED_DIR=data/processed/ml-32m \
-MIN_INTERACTIONS=5 \
-MAX_HISTORY_LENGTH=50 \
-make preprocess
+make preprocess-ml32m
 ```
 
 생성 파일:
@@ -274,7 +257,7 @@ make eval-baseline
 ```text
 artifacts/baseline/popularity.json
 artifacts/baseline/item_knn.json
-reports/baseline.md
+reports/ml_32m_baseline.md
 ```
 
 ## Semantic ID Codec
@@ -315,11 +298,7 @@ MovieLens 32M처럼 item 수가 많은 데이터셋에서는 capacity가 충분�
 키워야 합니다.
 
 ```bash
-PROCESSED_DIR=data/processed/ml-32m \
-SEMANTIC_ID_PATH=artifacts/semantic_id/ml-32m/semantic_ids.json \
-SEMANTIC_ID_REPORT=reports/ml_32m_semantic_id.md \
-SEMANTIC_ID_BRANCHING_FACTOR=32 \
-make build-semantic-ids
+make semantic-ids-ml32m
 ```
 
 생성 파일:
@@ -327,7 +306,7 @@ make build-semantic-ids
 ```text
 artifacts/semantic_id/semantic_ids.json
 artifacts/semantic_id/static_decoding_index.npz
-reports/semantic_id.md
+reports/ml_32m_semantic_id.md
 ```
 
 `build-static-decoding-index`는 `static_decoding.csr_utils.build_static_index`가 만든
@@ -368,7 +347,7 @@ ranking 평가는 `static_decoding` PyTorch sparse mask kernel을 사용하는 d
 해당 static_decoding index artifact를 자동으로 로드합니다. 직접 지정할 수도 있습니다.
 
 ```bash
-uv run python scripts/eval_generative_ranking.py \
+uv run python scripts/generative.py eval-ranking \
   --static-decoding-index-path artifacts/semantic_id/static_decoding_index.npz \
   --inference-batch-size 128
 ```
@@ -377,37 +356,14 @@ uv run python scripts/eval_generative_ranking.py \
 
 ```text
 artifacts/generative/model.pt
-reports/generative.md
-reports/generative_eval.md
+reports/ml_32m_generative.md
+reports/ml_32m_generative_eval.md
 ```
 
 MovieLens 32M 최종 학습/평가 예시:
 
 ```bash
-uv run python scripts/train_generative.py \
-  --train-parquet data/processed/ml-32m/train.parquet \
-  --valid-parquet data/processed/ml-32m/valid.parquet \
-  --semantic-id-path artifacts/semantic_id/ml-32m/semantic_ids.json \
-  --output-path artifacts/generative/ml-32m/model.pt \
-  --epochs 1 \
-  --batch-size 4096 \
-  --learning-rate 0.001 \
-  --max-history-length 50 \
-  --streaming \
-  --parquet-batch-size 131072 \
-  --device auto \
-  --log-every-batches 250
-
-uv run python scripts/eval_generative_ranking.py \
-  --checkpoint-path artifacts/generative/ml-32m/model.pt \
-  --semantic-id-path artifacts/semantic_id/ml-32m/semantic_ids.json \
-  --valid-parquet data/processed/ml-32m/valid.parquet \
-  --test-parquet data/processed/ml-32m/test.parquet \
-  --report-path reports/ml_32m_generative_eval.md \
-  --beam-size 20 \
-  --inference-batch-size 128 \
-  --static-decoding-index-path artifacts/semantic_id/ml-32m/static_decoding_index.npz \
-  --device auto
+make generative-ml32m
 ```
 
 현재 모델 구현은 학습/평가 루프, checkpoint format, `static_decoding` 기반 constrained
@@ -460,19 +416,10 @@ index.allowed_next_tokens([12, 4])
 - `static_decoding.csr_utils.build_static_index` 산출물 npz 저장 CLI 제공
 - `make benchmark-decoder`로 batch size별 latency와 throughput 리포트 생성
 
-기본 benchmark는 synthetic Semantic ID로 실행되며 결과는 다음 파일에 저장됩니다.
-
-```text
-reports/decoder_benchmark.md
-```
-
 MovieLens 32M Semantic ID 기준 benchmark:
 
 ```bash
-uv run python scripts/benchmark_decoder.py \
-  --semantic-id-path artifacts/semantic_id/ml-32m/semantic_ids.json \
-  --report-path reports/ml_32m_decoder_benchmark.md \
-  --batch-sizes 1 32 128 512
+make benchmark-ml32m
 ```
 
 ## Serving 벤치마크
@@ -500,20 +447,12 @@ make benchmark-serving
 MovieLens 32M checkpoint 기준:
 
 ```bash
-STATIC_REC_GENERATIVE_CHECKPOINT=artifacts/generative/ml-32m/model.pt \
-STATIC_REC_SEMANTIC_ID_PATH=artifacts/semantic_id/ml-32m/semantic_ids.json \
-STATIC_REC_STATIC_DECODING_INDEX_PATH=artifacts/semantic_id/ml-32m/static_decoding_index.npz \
-STATIC_REC_USER_HISTORY_PARQUET=data/processed/ml-32m/valid.parquet \
-STATIC_REC_DEVICE=cpu \
-SERVING_BENCHMARK_SERVICE=environment \
-SERVING_BENCHMARK_REPORT=reports/ml_32m_serving_benchmark.md \
-make benchmark-serving
+make benchmark-ml32m
 ```
 
 생성 파일:
 
 ```text
-reports/serving_benchmark.md
 reports/ml_32m_serving_benchmark.md
 ```
 

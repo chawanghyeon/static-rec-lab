@@ -73,79 +73,19 @@ MovieLens 32M 기준 결과입니다. Latest Small은 개발용 smoke test로만
 
 ```bash
 uv sync --group dev
-make lint
-make test
-MOVIELENS_DATASET=ml-32m \
-MOVIELENS_URL=https://files.grouplens.org/datasets/movielens/ml-32m.zip \
-make download-movielens
-RAW_RATINGS=data/raw/ml-32m/ratings.csv \
-PROCESSED_DIR=data/processed/ml-32m \
-make preprocess
-
-PROCESSED_DIR=data/processed/ml-32m \
-BASELINE_DIR=artifacts/baseline/ml-32m \
-make train-baseline
-
-PROCESSED_DIR=data/processed/ml-32m \
-BASELINE_DIR=artifacts/baseline/ml-32m \
-BASELINE_REPORT=reports/ml_32m_baseline.md \
-make eval-baseline
-
-PROCESSED_DIR=data/processed/ml-32m \
-SEMANTIC_ID_PATH=artifacts/semantic_id/ml-32m/semantic_ids.json \
-SEMANTIC_ID_REPORT=reports/ml_32m_semantic_id.md \
-SEMANTIC_ID_BRANCHING_FACTOR=32 \
-make build-semantic-ids
-
-SEMANTIC_ID_PATH=artifacts/semantic_id/ml-32m/semantic_ids.json \
-make validate-semantic-ids
-
-SEMANTIC_ID_PATH=artifacts/semantic_id/ml-32m/semantic_ids.json \
-STATIC_DECODING_INDEX_PATH=artifacts/semantic_id/ml-32m/static_decoding_index.npz \
-make build-static-decoding-index
-
-uv run python scripts/train_generative.py \
-  --train-parquet data/processed/ml-32m/train.parquet \
-  --valid-parquet data/processed/ml-32m/valid.parquet \
-  --semantic-id-path artifacts/semantic_id/ml-32m/semantic_ids.json \
-  --output-path artifacts/generative/ml-32m/model.pt \
-  --epochs 1 \
-  --batch-size 4096 \
-  --learning-rate 0.001 \
-  --max-history-length 50 \
-  --streaming \
-  --parquet-batch-size 131072 \
-  --device auto \
-  --log-every-batches 250
-
-uv run python scripts/eval_generative_ranking.py \
-  --checkpoint-path artifacts/generative/ml-32m/model.pt \
-  --semantic-id-path artifacts/semantic_id/ml-32m/semantic_ids.json \
-  --valid-parquet data/processed/ml-32m/valid.parquet \
-  --test-parquet data/processed/ml-32m/test.parquet \
-  --report-path reports/ml_32m_generative_eval.md \
-  --beam-size 20 \
-  --inference-batch-size 128 \
-  --static-decoding-index-path artifacts/semantic_id/ml-32m/static_decoding_index.npz \
-  --device auto
-
-uv run python scripts/benchmark_decoder.py \
-  --semantic-id-path artifacts/semantic_id/ml-32m/semantic_ids.json \
-  --report-path reports/ml_32m_decoder_benchmark.md \
-  --batch-sizes 1 32 128 512
+make check
+make download-ml32m
+make reproduce-ml32m
 ```
 
-model-backed serving benchmark:
+단계별로 끊어 실행할 수도 있습니다.
 
 ```bash
-STATIC_REC_GENERATIVE_CHECKPOINT=artifacts/generative/ml-32m/model.pt \
-STATIC_REC_SEMANTIC_ID_PATH=artifacts/semantic_id/ml-32m/semantic_ids.json \
-STATIC_REC_STATIC_DECODING_INDEX_PATH=artifacts/semantic_id/ml-32m/static_decoding_index.npz \
-STATIC_REC_USER_HISTORY_PARQUET=data/processed/ml-32m/valid.parquet \
-STATIC_REC_DEVICE=cpu \
-SERVING_BENCHMARK_SERVICE=environment \
-SERVING_BENCHMARK_REPORT=reports/ml_32m_serving_benchmark.md \
-make benchmark-serving
+make preprocess-ml32m
+make baseline-ml32m
+make semantic-ids-ml32m
+make generative-ml32m
+make benchmark-ml32m
 ```
 
 ## 대표 리포트

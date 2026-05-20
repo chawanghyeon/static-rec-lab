@@ -225,6 +225,15 @@ artifacts/*
 artifacts/semantic_id/*
 !artifacts/semantic_id/.gitkeep
 
+# Generated development reports
+reports/local/
+reports/baseline.md
+reports/semantic_id.md
+reports/generative.md
+reports/generative_eval.md
+reports/decoder_benchmark.md
+reports/serving_benchmark.md
+
 # Marimo
 marimo/_static/
 marimo/_lsp/
