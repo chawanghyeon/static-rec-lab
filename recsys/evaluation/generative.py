@@ -11,10 +11,12 @@ from typing import Any, cast
 import pandas as pd
 import torch
 
+from recsys.data import coerce_item_ids
 from recsys.decoding import (
+    STATIC_DECODING_DECODER_NAME,
     StaticDecodingIndex,
     StaticDecodingTorchIndex,
-    validate_static_decoding_index_matches_codec,
+    load_or_build_static_decoding_index,
 )
 from recsys.evaluation.metrics import RankingMetrics, evaluate_ranking_at_k
 from recsys.models import (
@@ -23,8 +25,6 @@ from recsys.models import (
     generate_semantic_ids_with_static_decoding,
 )
 from recsys.semantic_id import SemanticIdCodec, UnknownSemanticIdError
-
-STATIC_DECODING_DECODER_NAME = "static_decoding_pt"
 
 
 @dataclass(frozen=True)
@@ -86,7 +86,7 @@ def evaluate_generative_ranking(
 
     max_k = max(cutoffs)
     effective_beam_size = max(beam_size, max_k)
-    decoder = build_static_decoding_index(
+    decoder = load_or_build_static_decoding_index(
         codec=codec,
         static_decoding_index_path=static_decoding_index_path,
     )
@@ -103,7 +103,7 @@ def evaluate_generative_ranking(
     rows = list(eval_frame.itertuples(index=False))
     for start in range(0, len(rows), inference_batch_size):
         row_batch = rows[start : start + inference_batch_size]
-        histories = [_coerce_item_ids(cast(Any, row.history_item_ids)) for row in row_batch]
+        histories = [coerce_item_ids(row.history_item_ids) for row in row_batch]
         target_item_ids = [int(cast(Any, row.target_item_id)) for row in row_batch]
         unknown_target_examples += sum(
             1 for target_item_id in target_item_ids if not codec.has_item(target_item_id)
@@ -195,38 +195,11 @@ def recommend_with_constrained_generation(
         max_results=max(beam_size, k),
         device=device,
     )
-    history_items = {int(item_id) for item_id in history_item_ids}
-    seen_items: set[int] = set()
-    item_ids: list[int] = []
-    invalid_sequences = 0
-    history_filtered_items = 0
-    duplicate_items = 0
-
-    for beam_result in beam_results:
-        try:
-            item_id = codec.decode_semantic_id(beam_result.semantic_id)
-        except UnknownSemanticIdError:
-            invalid_sequences += 1
-            continue
-
-        if item_id in history_items:
-            history_filtered_items += 1
-            continue
-        if item_id in seen_items:
-            duplicate_items += 1
-            continue
-
-        item_ids.append(item_id)
-        seen_items.add(item_id)
-        if len(item_ids) >= k:
-            break
-
-    return GenerativeRecommendationResult(
-        item_ids=tuple(item_ids),
-        generated_sequences=len(beam_results),
-        invalid_sequences=invalid_sequences,
-        history_filtered_items=history_filtered_items,
-        duplicate_items=duplicate_items,
+    return _beam_results_to_recommendation_result(
+        beam_results=beam_results,
+        codec=codec,
+        history_item_ids=history_item_ids,
+        k=k,
     )
 
 
@@ -401,34 +374,6 @@ def write_generative_ranking_report(
     return path
 
 
-def build_static_decoding_index(
-    *,
-    codec: SemanticIdCodec,
-    static_decoding_index_path: str | Path | None = None,
-) -> StaticDecodingIndex:
-    """평가에서 사용할 static_decoding index를 로드하거나 생성한다."""
-    if static_decoding_index_path is None:
-        return StaticDecodingIndex.from_codec(
-            codec,
-            dense_lookup_layers=_static_decoding_dense_lookup_layers(codec),
-        )
-    index = StaticDecodingIndex.load_npz(static_decoding_index_path)
-    validate_static_decoding_index_matches_codec(index=index, codec=codec)
-    return index
-
-
-def _static_decoding_dense_lookup_layers(codec: SemanticIdCodec) -> int:
-    depths = {len(semantic_id) for semantic_id in codec.item_to_semantic_id.values()}
-    if len(depths) != 1:
-        msg = f"모든 Semantic ID 길이가 같아야 합니다: {sorted(depths)}"
-        raise ValueError(msg)
-    depth = next(iter(depths), 0)
-    if depth < 2:
-        msg = "static_decoding build_static_index는 길이 2 이상의 Semantic ID가 필요합니다."
-        raise ValueError(msg)
-    return min(2, depth - 1)
-
-
 def _validate_eval_frame(eval_frame: pd.DataFrame) -> None:
     required_columns = {"history_item_ids", "target_item_id"}
     missing_columns = sorted(required_columns - set(eval_frame.columns))
@@ -444,16 +389,3 @@ def _validate_cutoffs(cutoffs: Sequence[int]) -> None:
     if any(cutoff < 1 for cutoff in cutoffs):
         msg = f"모든 cutoff는 1 이상이어야 합니다: {list(cutoffs)}"
         raise ValueError(msg)
-
-
-def _coerce_item_ids(value: Any) -> tuple[int, ...]:
-    if value is None:
-        return ()
-    if isinstance(value, float) and pd.isna(value):
-        return ()
-    if isinstance(value, str):
-        msg = "history_item_ids는 문자열이 아니라 정수 sequence여야 합니다."
-        raise ValueError(msg)
-    if isinstance(value, int):
-        return (value,)
-    return tuple(int(cast(Any, item_id)) for item_id in cast(Sequence[object], value))

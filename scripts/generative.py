@@ -30,6 +30,7 @@ from recsys.models import (
     evaluate_model,
     infer_semantic_vocab_size,
     load_checkpoint,
+    resolve_torch_device,
     save_checkpoint,
     train_one_epoch,
 )
@@ -172,7 +173,7 @@ def train_generative(args: argparse.Namespace) -> None:
         raise ValueError("batch-size는 1 이상이어야 합니다.")
 
     torch.manual_seed(args.random_seed)
-    device = _resolve_device(args.device)
+    device = resolve_torch_device(args.device)
     codec = SemanticIdCodec.load_json(args.semantic_id_path)
     train_loader: Iterable[GenerativeBatch]
     valid_loader: Iterable[GenerativeBatch]
@@ -302,7 +303,7 @@ def eval_generative(args: argparse.Namespace) -> None:
     if args.batch_size < 1:
         raise ValueError("batch-size는 1 이상이어야 합니다.")
 
-    device = _resolve_device(args.device)
+    device = resolve_torch_device(args.device)
     model, item_to_index = load_checkpoint(args.checkpoint_path, device=device)
     codec = SemanticIdCodec.load_json(args.semantic_id_path)
     eval_frame = pd.read_parquet(args.eval_parquet)
@@ -338,7 +339,7 @@ def eval_generative_ranking(args: argparse.Namespace) -> None:
     if args.inference_batch_size < 1:
         raise ValueError("inference-batch-size는 1 이상이어야 합니다.")
 
-    device = _resolve_device(args.device)
+    device = resolve_torch_device(args.device)
     model, item_to_index = load_checkpoint(args.checkpoint_path, device=device)
     codec = SemanticIdCodec.load_json(args.semantic_id_path)
     valid_frame = _read_eval_frame(args.valid_parquet, args.max_valid_examples)
@@ -436,20 +437,6 @@ def _print_evaluation(evaluation: GenerativeRankingEvaluation) -> None:
         f"unknown_targets={evaluation.unknown_target_examples}, "
         f"elapsed_ms={evaluation.elapsed_ms:.2f}"
     )
-
-
-def _resolve_device(value: str) -> torch.device:
-    if value == "cpu":
-        return torch.device("cpu")
-    if value == "cuda":
-        return torch.device("cuda")
-    if value == "mps":
-        return torch.device("mps")
-    if torch.cuda.is_available():
-        return torch.device("cuda")
-    if torch.backends.mps.is_available():
-        return torch.device("mps")
-    return torch.device("cpu")
 
 
 if __name__ == "__main__":

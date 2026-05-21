@@ -2,9 +2,6 @@
 
 from recsys.decoding.beam_search import BeamSearchResult
 from recsys.decoding.static_decoding import (
-    STATIC_DECODING_COMMIT,
-    STATIC_DECODING_REPOSITORY,
-    StaticDecodingDependencyError,
     StaticDecodingIndex,
     StaticDecodingTorchIndex,
     build_static_decoding_jax_random_model,
@@ -16,9 +13,20 @@ from recsys.decoding.static_decoding import (
     static_decoding_sparse_transition_torch,
     validate_static_decoding_index_matches_codec,
 )
+from recsys.decoding.static_dependency import (
+    STATIC_DECODING_COMMIT,
+    STATIC_DECODING_REPOSITORY,
+    StaticDecodingDependencyError,
+)
+from recsys.decoding.static_index import (
+    STATIC_DECODING_DECODER_NAME,
+    load_or_build_static_decoding_index,
+    resolve_dense_lookup_layers,
+)
 
 __all__ = [
     "STATIC_DECODING_COMMIT",
+    "STATIC_DECODING_DECODER_NAME",
     "STATIC_DECODING_REPOSITORY",
     "BeamSearchResult",
     "StaticDecodingDependencyError",
@@ -26,6 +34,8 @@ __all__ = [
     "StaticDecodingTorchIndex",
     "build_static_decoding_jax_random_model",
     "build_static_decoding_random_model",
+    "load_or_build_static_decoding_index",
+    "resolve_dense_lookup_layers",
     "static_decoding_constrained_beam_search",
     "static_decoding_generate_and_apply_logprobs_mask",
     "static_decoding_generate_and_apply_logprobs_mask_jax",

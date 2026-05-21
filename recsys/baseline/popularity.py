@@ -10,6 +10,7 @@ from typing import Any, Final
 
 import pandas as pd
 
+from recsys.data import coerce_item_ids
 from recsys.evaluation import RankingMetrics, evaluate_ranking_at_k
 
 DEFAULT_CUTOFFS: Final[tuple[int, int]] = (10, 20)
@@ -123,7 +124,7 @@ def evaluate_popularity_model(
 
     max_k = max(cutoffs)
     recommendations = [
-        model.recommend(_coerce_item_ids(row.history_item_ids), max_k)
+        model.recommend(coerce_item_ids(row.history_item_ids), max_k)
         for row in eval_frame.itertuples(index=False)
     ]
     relevant_items = [[int(target_item_id)] for target_item_id in eval_frame["target_item_id"]]
@@ -178,14 +179,6 @@ def _metrics_table_rows(split_name: str, metrics_by_k: dict[int, RankingMetrics]
         (f"| {split_name} | {k} | {metrics.recall:.6f} | {metrics.ndcg:.6f} | {metrics.mrr:.6f} |")
         for k, metrics in sorted(metrics_by_k.items())
     ]
-
-
-def _coerce_item_ids(value: Any) -> list[int]:
-    if value is None:
-        return []
-    if isinstance(value, int):
-        return [value]
-    return [int(item_id) for item_id in value]
 
 
 def _validate_model_payload(payload: Any) -> None:

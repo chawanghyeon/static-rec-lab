@@ -14,6 +14,7 @@ import duckdb
 import pandas as pd
 
 from recsys.baseline.popularity import PopularItem, fit_popularity_model
+from recsys.data import coerce_item_ids
 from recsys.evaluation import RankingMetrics, evaluate_ranking_at_k
 
 DEFAULT_MAX_CANDIDATES_PER_ITEM: Final[int] = 200
@@ -106,7 +107,7 @@ def fit_item_knn_model(
 
     for record in train_frame[["history_item_ids", "target_item_id"]].to_dict("records"):
         target_item_id = int(record["target_item_id"])
-        history_item_ids = _coerce_item_ids(record["history_item_ids"])[-max_history_items:]
+        history_item_ids = coerce_item_ids(record["history_item_ids"])[-max_history_items:]
         for source_item_id in set(history_item_ids):
             if source_item_id == target_item_id:
                 continue
@@ -243,7 +244,7 @@ def evaluate_item_knn_model(
 
     max_k = max(cutoffs)
     recommendations = [
-        model.recommend(_coerce_item_ids(row.history_item_ids), max_k)
+        model.recommend(coerce_item_ids(row.history_item_ids), max_k)
         for row in eval_frame.itertuples(index=False)
     ]
     relevant_items = [[int(target_item_id)] for target_item_id in eval_frame["target_item_id"]]
@@ -258,14 +259,6 @@ def _validate_train_frame(train_frame: pd.DataFrame) -> None:
     if missing_columns:
         msg = f"train 데이터에 필요한 컬럼이 없습니다: {missing_columns}"
         raise ValueError(msg)
-
-
-def _coerce_item_ids(value: Any) -> list[int]:
-    if value is None:
-        return []
-    if isinstance(value, int):
-        return [value]
-    return [int(item_id) for item_id in value]
 
 
 def _fit_popularity_items_with_duckdb(

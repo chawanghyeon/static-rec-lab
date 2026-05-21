@@ -31,8 +31,29 @@ GENERATIVE_BATCH_SIZE ?= 64
 GENERATIVE_LR ?= 0.001
 GENERATIVE_BEAM_SIZE ?= 50
 GENERATIVE_INFERENCE_BATCH_SIZE ?= 128
+GENERATIVE_DEVICE ?= auto
+GENERATIVE_STREAMING ?= 0
+GENERATIVE_PARQUET_BATCH_SIZE ?= 65536
+GENERATIVE_LOG_EVERY_BATCHES ?= 250
+GENERATIVE_COMPILE_MODEL ?= 0
+ifneq ($(filter 1 true yes,$(GENERATIVE_STREAMING)),)
+GENERATIVE_STREAMING_CLI_ARG := --streaming
+else
+GENERATIVE_STREAMING_CLI_ARG :=
+endif
+ifneq ($(filter 1 true yes,$(GENERATIVE_COMPILE_MODEL)),)
+GENERATIVE_COMPILE_MODEL_CLI_ARG := --compile-model
+else
+GENERATIVE_COMPILE_MODEL_CLI_ARG :=
+endif
 DECODER_BENCHMARK_REPORT ?= reports/local/decoder_benchmark.md
 DECODER_BENCHMARK_BATCH_SIZES ?= 1 32 128 512
+DECODER_BENCHMARK_SEMANTIC_ID_PATH ?=
+ifneq ($(strip $(DECODER_BENCHMARK_SEMANTIC_ID_PATH)),)
+DECODER_BENCHMARK_SEMANTIC_ID_CLI_ARG := --semantic-id-path $(DECODER_BENCHMARK_SEMANTIC_ID_PATH)
+else
+DECODER_BENCHMARK_SEMANTIC_ID_CLI_ARG :=
+endif
 SERVING_BENCHMARK_REPORT ?= reports/local/serving_benchmark.md
 SERVING_BENCHMARK_BATCH_SIZES ?= 1 32 128
 SERVING_BENCHMARK_SERVICE ?= mock
@@ -129,7 +150,10 @@ train-generative:
 		--epochs $(GENERATIVE_EPOCHS) \
 		--batch-size $(GENERATIVE_BATCH_SIZE) \
 		--learning-rate $(GENERATIVE_LR) \
-		--max-history-length $(MAX_HISTORY_LENGTH)
+		--max-history-length $(MAX_HISTORY_LENGTH) \
+		--device $(GENERATIVE_DEVICE) \
+		--parquet-batch-size $(GENERATIVE_PARQUET_BATCH_SIZE) \
+		--log-every-batches $(GENERATIVE_LOG_EVERY_BATCHES) $(GENERATIVE_STREAMING_CLI_ARG) $(GENERATIVE_COMPILE_MODEL_CLI_ARG)
 
 eval-generative:
 	$(UV) run python scripts/generative.py eval \
@@ -153,7 +177,7 @@ eval-generative-ranking:
 benchmark-decoder:
 	$(UV) run python scripts/benchmark.py decoder \
 		--report-path $(DECODER_BENCHMARK_REPORT) \
-		--batch-sizes $(DECODER_BENCHMARK_BATCH_SIZES)
+		--batch-sizes $(DECODER_BENCHMARK_BATCH_SIZES) $(DECODER_BENCHMARK_SEMANTIC_ID_CLI_ARG)
 
 benchmark-serving:
 	$(UV) run python scripts/benchmark.py serving \
@@ -193,19 +217,14 @@ semantic-ids-ml32m:
 		STATIC_DECODING_INDEX_PATH=$(ML32M_STATIC_DECODING_INDEX_PATH)
 
 generative-ml32m:
-	$(UV) run python scripts/generative.py train \
-		--train-parquet $(ML32M_PROCESSED_DIR)/train.parquet \
-		--valid-parquet $(ML32M_PROCESSED_DIR)/valid.parquet \
-		--semantic-id-path $(ML32M_SEMANTIC_ID_PATH) \
-		--output-path $(ML32M_GENERATIVE_CHECKPOINT) \
-		--epochs $(GENERATIVE_EPOCHS) \
-		--batch-size $(ML32M_GENERATIVE_BATCH_SIZE) \
-		--learning-rate $(GENERATIVE_LR) \
-		--max-history-length $(MAX_HISTORY_LENGTH) \
-		--streaming \
-		--parquet-batch-size $(ML32M_GENERATIVE_PARQUET_BATCH_SIZE) \
-		--device $(ML32M_DEVICE) \
-		--log-every-batches 250
+	$(MAKE) train-generative \
+		PROCESSED_DIR=$(ML32M_PROCESSED_DIR) \
+		SEMANTIC_ID_PATH=$(ML32M_SEMANTIC_ID_PATH) \
+		GENERATIVE_CHECKPOINT=$(ML32M_GENERATIVE_CHECKPOINT) \
+		GENERATIVE_BATCH_SIZE=$(ML32M_GENERATIVE_BATCH_SIZE) \
+		GENERATIVE_STREAMING=1 \
+		GENERATIVE_PARQUET_BATCH_SIZE=$(ML32M_GENERATIVE_PARQUET_BATCH_SIZE) \
+		GENERATIVE_DEVICE=$(ML32M_DEVICE)
 	$(MAKE) eval-generative \
 		PROCESSED_DIR=$(ML32M_PROCESSED_DIR) \
 		SEMANTIC_ID_PATH=$(ML32M_SEMANTIC_ID_PATH) \
@@ -221,10 +240,9 @@ generative-ml32m:
 		GENERATIVE_BEAM_SIZE=$(ML32M_GENERATIVE_BEAM_SIZE)
 
 benchmark-ml32m:
-	$(UV) run python scripts/benchmark.py decoder \
-		--semantic-id-path $(ML32M_SEMANTIC_ID_PATH) \
-		--report-path $(ML32M_DECODER_BENCHMARK_REPORT) \
-		--batch-sizes $(DECODER_BENCHMARK_BATCH_SIZES)
+	$(MAKE) benchmark-decoder \
+		DECODER_BENCHMARK_SEMANTIC_ID_PATH=$(ML32M_SEMANTIC_ID_PATH) \
+		DECODER_BENCHMARK_REPORT=$(ML32M_DECODER_BENCHMARK_REPORT)
 	STATIC_REC_GENERATIVE_CHECKPOINT=$(ML32M_GENERATIVE_CHECKPOINT) \
 	STATIC_REC_SEMANTIC_ID_PATH=$(ML32M_SEMANTIC_ID_PATH) \
 	STATIC_REC_STATIC_DECODING_INDEX_PATH=$(ML32M_STATIC_DECODING_INDEX_PATH) \

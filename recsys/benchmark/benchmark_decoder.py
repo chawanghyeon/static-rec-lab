@@ -3,15 +3,30 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Iterable, Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Sequence
 from importlib import import_module
-from pathlib import Path
 from typing import Any
 
 import numpy as np
 import torch
 
+from recsys.benchmark.decoder_data import (
+    generate_synthetic_semantic_ids,
+    infer_vocab_size,
+    load_semantic_ids,
+    normalize_semantic_ids,
+)
+from recsys.benchmark.decoder_report import write_decoder_benchmark_report
+from recsys.benchmark.decoder_schema import (
+    DecoderBenchmarkConfig,
+    DecoderBenchmarkError,
+    DecoderBenchmarkResult,
+    DecoderBenchmarkSummary,
+    StaticDecodingHarnessBenchmarkResult,
+    StaticDecodingJaxHarnessBenchmarkResult,
+    StaticDecodingJaxKernelBenchmarkResult,
+    StaticDecodingKernelBenchmarkResult,
+)
 from recsys.decoding import (
     StaticDecodingIndex,
     StaticDecodingTorchIndex,
@@ -24,144 +39,21 @@ from recsys.decoding import (
 )
 from recsys.decoding.naive_trie import SemanticIdTrie
 from recsys.decoding.static_matrix import INVALID_STATE, StaticTransitionMatrixDecoder
-from recsys.semantic_id import SemanticId, SemanticIdCodec
 
-
-class DecoderBenchmarkError(ValueError):
-    """Decoder benchmark 설정 또는 검증 오류."""
-
-
-@dataclass(frozen=True)
-class DecoderBenchmarkConfig:
-    """Decoder benchmark 실행 설정."""
-
-    batch_sizes: tuple[int, ...] = (1, 32, 128, 512)
-    warmup_iterations: int = 10
-    iterations: int = 100
-    num_semantic_ids: int = 4096
-    semantic_id_depth: int = 4
-    vocab_size: int = 128
-    random_seed: int = 42
-
-
-@dataclass(frozen=True)
-class DecoderBenchmarkResult:
-    """Batch size별 decoder benchmark 결과."""
-
-    batch_size: int
-    masks_identical: bool
-    naive_latency_ms: float
-    static_latency_ms: float
-    naive_throughput_rows_per_s: float
-    static_throughput_rows_per_s: float
-    speedup: float
-
-
-@dataclass(frozen=True)
-class StaticDecodingKernelBenchmarkResult:
-    """static_decoding PyTorch sparse candidate extraction 결과."""
-
-    batch_size: int
-    candidates_identical: bool
-    static_decoding_latency_ms: float
-    static_decoding_throughput_rows_per_s: float
-
-
-@dataclass(frozen=True)
-class StaticDecodingHarnessBenchmarkResult:
-    """static_decoding PyTorch sparse_transition_torch harness 결과."""
-
-    batch_size: int
-    sequences_valid: bool
-    static_decoding_harness_latency_ms: float
-    static_decoding_harness_throughput_rows_per_s: float
-
-
-@dataclass(frozen=True)
-class StaticDecodingJaxKernelBenchmarkResult:
-    """static_decoding JAX sparse candidate extraction 결과."""
-
-    batch_size: int
-    candidates_identical: bool
-    static_decoding_jax_latency_ms: float
-    static_decoding_jax_throughput_rows_per_s: float
-
-
-@dataclass(frozen=True)
-class StaticDecodingJaxHarnessBenchmarkResult:
-    """static_decoding JAX sparse_transition_jax harness 결과."""
-
-    batch_size: int
-    sequences_valid: bool
-    static_decoding_jax_harness_latency_ms: float
-    static_decoding_jax_harness_throughput_rows_per_s: float
-
-
-@dataclass(frozen=True)
-class DecoderBenchmarkSummary:
-    """Decoder benchmark 전체 결과."""
-
-    config: DecoderBenchmarkConfig
-    source: str
-    num_semantic_ids: int
-    num_states: int
-    vocab_size: int
-    results: tuple[DecoderBenchmarkResult, ...]
-    static_decoding_kernel_results: tuple[StaticDecodingKernelBenchmarkResult, ...] = ()
-    static_decoding_harness_results: tuple[StaticDecodingHarnessBenchmarkResult, ...] = ()
-    static_decoding_jax_kernel_results: tuple[StaticDecodingJaxKernelBenchmarkResult, ...] = ()
-    static_decoding_jax_harness_results: tuple[StaticDecodingJaxHarnessBenchmarkResult, ...] = ()
-
-
-def load_semantic_ids(path: str | Path) -> tuple[SemanticId, ...]:
-    """Semantic ID codec JSON에서 Semantic ID 목록을 로드한다."""
-    codec = SemanticIdCodec.load_json(path)
-    return tuple(
-        codec.item_to_semantic_id[item_id] for item_id in sorted(codec.item_to_semantic_id)
-    )
-
-
-def generate_synthetic_semantic_ids(
-    *,
-    num_semantic_ids: int,
-    depth: int,
-    vocab_size: int,
-    random_seed: int,
-) -> tuple[SemanticId, ...]:
-    """재현 가능한 synthetic Semantic ID 목록을 생성한다."""
-    if num_semantic_ids < 1:
-        msg = "num_semantic_ids는 1 이상이어야 합니다."
-        raise DecoderBenchmarkError(msg)
-    if depth < 1:
-        msg = "depth는 1 이상이어야 합니다."
-        raise DecoderBenchmarkError(msg)
-    if vocab_size < 1:
-        msg = "vocab_size는 1 이상이어야 합니다."
-        raise DecoderBenchmarkError(msg)
-    if vocab_size**depth < num_semantic_ids:
-        msg = (
-            "vocab_size와 depth 조합으로 요청한 수만큼 고유 Semantic ID를 만들 수 없습니다: "
-            f"vocab_size={vocab_size}, depth={depth}, num_semantic_ids={num_semantic_ids}"
-        )
-        raise DecoderBenchmarkError(msg)
-
-    rng = np.random.default_rng(random_seed)
-    semantic_ids: set[SemanticId] = set()
-    while len(semantic_ids) < num_semantic_ids:
-        remaining = num_semantic_ids - len(semantic_ids)
-        candidate_count = max(remaining * 2, 1024)
-        candidates = rng.integers(
-            0,
-            vocab_size,
-            size=(candidate_count, depth),
-            dtype=np.int64,
-        )
-        for row in candidates:
-            semantic_ids.add(tuple(int(token) for token in row))
-            if len(semantic_ids) >= num_semantic_ids:
-                break
-
-    return tuple(sorted(semantic_ids))
+__all__ = [
+    "DecoderBenchmarkConfig",
+    "DecoderBenchmarkError",
+    "DecoderBenchmarkResult",
+    "DecoderBenchmarkSummary",
+    "StaticDecodingHarnessBenchmarkResult",
+    "StaticDecodingJaxHarnessBenchmarkResult",
+    "StaticDecodingJaxKernelBenchmarkResult",
+    "StaticDecodingKernelBenchmarkResult",
+    "generate_synthetic_semantic_ids",
+    "load_semantic_ids",
+    "run_decoder_benchmark",
+    "write_decoder_benchmark_report",
+]
 
 
 def run_decoder_benchmark(
@@ -181,9 +73,9 @@ def run_decoder_benchmark(
             random_seed=config.random_seed,
         )
         if semantic_ids is None
-        else _normalize_semantic_ids(semantic_ids)
+        else normalize_semantic_ids(semantic_ids)
     )
-    vocab_size = max(config.vocab_size, _infer_vocab_size(resolved_semantic_ids))
+    vocab_size = max(config.vocab_size, infer_vocab_size(resolved_semantic_ids))
     trie = SemanticIdTrie(resolved_semantic_ids)
     decoder = StaticTransitionMatrixDecoder.from_trie(trie, vocab_size=vocab_size)
     rng = np.random.default_rng(config.random_seed)
@@ -458,159 +350,6 @@ def run_decoder_benchmark(
     )
 
 
-def write_decoder_benchmark_report(
-    path: str | Path,
-    summary: DecoderBenchmarkSummary,
-) -> Path:
-    """Decoder benchmark 결과를 한국어 markdown report로 저장한다."""
-    output_path = Path(path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    lines = [
-        "# Decoder 벤치마크 리포트",
-        "",
-        "naive trie decoder와 검증용 sparse transition matrix decoder의 "
-        "allowed-token mask 생성 성능을 비교합니다.",
-        "",
-        "## 설정",
-        "",
-        f"- 데이터 소스: `{summary.source}`",
-        f"- Semantic ID 수: {summary.num_semantic_ids:,}",
-        f"- trie state 수: {summary.num_states:,}",
-        f"- vocab size: {summary.vocab_size:,}",
-        f"- batch sizes: {', '.join(str(size) for size in summary.config.batch_sizes)}",
-        f"- warmup iterations: {summary.config.warmup_iterations:,}",
-        f"- measured iterations: {summary.config.iterations:,}",
-        f"- random seed: {summary.config.random_seed}",
-        "",
-        "## 결과",
-        "",
-        "| batch_size | mask 일치 | naive latency ms | matrix latency ms | "
-        "naive rows/s | matrix rows/s | speedup |",
-        "|---:|:---:|---:|---:|---:|---:|---:|",
-    ]
-    for result in summary.results:
-        lines.append(
-            f"| {result.batch_size:,} | {'예' if result.masks_identical else '아니오'} | "
-            f"{result.naive_latency_ms:.4f} | {result.static_latency_ms:.4f} | "
-            f"{result.naive_throughput_rows_per_s:,.2f} | "
-            f"{result.static_throughput_rows_per_s:,.2f} | {result.speedup:.2f}x |"
-        )
-    if summary.static_decoding_kernel_results:
-        lines.extend(
-            [
-                "",
-                "## static_decoding PyTorch kernel",
-                "",
-                "`static_decoding.decoding_pt.generate_and_apply_logprobs_mask`를 "
-                "사용해 CSR sparse tail에서 유효 child token 후보를 추출하는 성능을 "
-                "측정합니다. 이 값은 전체 vocab boolean mask 생성이 아니라 candidate "
-                "gather latency입니다.",
-                "",
-                "| batch_size | 후보 일치 | static_decoding latency ms | static_decoding rows/s |",
-                "|---:|:---:|---:|---:|",
-            ]
-        )
-        for static_decoding_result in summary.static_decoding_kernel_results:
-            lines.append(
-                f"| {static_decoding_result.batch_size:,} | "
-                f"{'예' if static_decoding_result.candidates_identical else '아니오'} | "
-                f"{static_decoding_result.static_decoding_latency_ms:.4f} | "
-                f"{static_decoding_result.static_decoding_throughput_rows_per_s:,.2f} |"
-            )
-    if summary.static_decoding_harness_results:
-        lines.extend(
-            [
-                "",
-                "## static_decoding sparse_transition_torch harness",
-                "",
-                "`static_decoding.decoding_pt.sparse_transition_torch`를 그대로 호출해 "
-                "`static_decoding` PyTorch decoding loop가 생성한 Semantic ID가 모두 유효한지 "
-                "검증하고 end-to-end harness latency를 측정합니다. 이 harness는 "
-                "`static_decoding.decoding_pt.RandomModel`을 사용하므로 추천 모델 품질 "
-                "평가는 아니며, static_decoding 호출 경로와 constrained generation 동작 검증에 "
-                "초점을 둡니다.",
-                "",
-                "| batch_size | 생성 ID 유효 | static_decoding harness latency ms | "
-                "static_decoding harness rows/s |",
-                "|---:|:---:|---:|---:|",
-            ]
-        )
-        for harness_result in summary.static_decoding_harness_results:
-            lines.append(
-                f"| {harness_result.batch_size:,} | "
-                f"{'예' if harness_result.sequences_valid else '아니오'} | "
-                f"{harness_result.static_decoding_harness_latency_ms:.4f} | "
-                f"{harness_result.static_decoding_harness_throughput_rows_per_s:,.2f} |"
-            )
-    if summary.static_decoding_jax_kernel_results:
-        lines.extend(
-            [
-                "",
-                "## static_decoding JAX kernel",
-                "",
-                "`static_decoding.decoding_jax.generate_and_apply_logprobs_mask`를 "
-                "사용해 CSR sparse tail에서 유효 child token 후보를 추출하는 성능을 "
-                "측정합니다. 이 값은 CPU 환경의 JAX candidate gather latency입니다.",
-                "",
-                "| batch_size | 후보 일치 | static_decoding JAX latency ms | "
-                "static_decoding JAX rows/s |",
-                "|---:|:---:|---:|---:|",
-            ]
-        )
-        for jax_result in summary.static_decoding_jax_kernel_results:
-            lines.append(
-                f"| {jax_result.batch_size:,} | "
-                f"{'예' if jax_result.candidates_identical else '아니오'} | "
-                f"{jax_result.static_decoding_jax_latency_ms:.4f} | "
-                f"{jax_result.static_decoding_jax_throughput_rows_per_s:,.2f} |"
-            )
-    if summary.static_decoding_jax_harness_results:
-        lines.extend(
-            [
-                "",
-                "## static_decoding sparse_transition_jax harness",
-                "",
-                "`static_decoding.decoding_jax.sparse_transition_jax`를 그대로 호출해 "
-                "static_decoding JAX decoding loop가 생성한 Semantic ID가 모두 유효한지 검증하고 "
-                "end-to-end harness latency를 측정합니다. 이 harness는 "
-                "`static_decoding.decoding_jax.RandomModel`을 사용합니다.",
-                "",
-                "| batch_size | 생성 ID 유효 | static_decoding JAX harness latency ms | "
-                "static_decoding JAX harness rows/s |",
-                "|---:|:---:|---:|---:|",
-            ]
-        )
-        for jax_harness_result in summary.static_decoding_jax_harness_results:
-            lines.append(
-                f"| {jax_harness_result.batch_size:,} | "
-                f"{'예' if jax_harness_result.sequences_valid else '아니오'} | "
-                f"{jax_harness_result.static_decoding_jax_harness_latency_ms:.4f} | "
-                f"{jax_harness_result.static_decoding_jax_harness_throughput_rows_per_s:,.2f} |"
-            )
-    lines.extend(
-        [
-            "",
-            "## 검증",
-            "",
-            "- 각 batch size의 모든 sampled state batch에서 naive trie와 검증용 matrix decoder의 "
-            "allowed-token mask가 동일한지 먼저 확인합니다.",
-            "- benchmark 실행 중 생성된 mask checksum도 비교해서 측정 루프 안의 결과 차이를 "
-            "감지합니다.",
-            "- throughput은 measured iterations 동안 생성한 mask row 수를 총 소요 시간으로 "
-            "나눈 값입니다.",
-            "- static_decoding PyTorch kernel은 동일 prefix batch에서 static_decoding index의 "
-            "allowed-token 후보와 일치하는지 검증합니다.",
-            "- static_decoding sparse_transition_torch harness는 생성된 모든 Semantic ID가 "
-            "static_decoding index에 존재하는지 검증합니다.",
-            "- static_decoding JAX kernel과 sparse_transition_jax harness도 동일한 "
-            "static_decoding index에서 후보 token 및 생성 Semantic ID validity를 검증합니다.",
-            "",
-        ]
-    )
-    output_path.write_text("\n".join(lines), encoding="utf-8")
-    return output_path
-
-
 def _validate_config(config: DecoderBenchmarkConfig) -> None:
     if not config.batch_sizes:
         msg = "batch_sizes는 비어 있을 수 없습니다."
@@ -633,22 +372,6 @@ def _validate_config(config: DecoderBenchmarkConfig) -> None:
     if config.vocab_size < 1:
         msg = "vocab_size는 1 이상이어야 합니다."
         raise DecoderBenchmarkError(msg)
-
-
-def _normalize_semantic_ids(semantic_ids: Sequence[Sequence[int]]) -> tuple[SemanticId, ...]:
-    normalized = tuple(tuple(int(token) for token in semantic_id) for semantic_id in semantic_ids)
-    if not normalized:
-        msg = "benchmark Semantic ID 목록은 비어 있을 수 없습니다."
-        raise DecoderBenchmarkError(msg)
-    if any(not semantic_id for semantic_id in normalized):
-        msg = "benchmark Semantic ID sequence는 비어 있을 수 없습니다."
-        raise DecoderBenchmarkError(msg)
-    return normalized
-
-
-def _infer_vocab_size(semantic_ids: Iterable[Sequence[int]]) -> int:
-    max_token = max((token for semantic_id in semantic_ids for token in semantic_id), default=-1)
-    return max_token + 1 if max_token >= 0 else 1
 
 
 def _sample_state_batches(

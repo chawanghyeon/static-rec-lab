@@ -9,6 +9,8 @@ import torch
 from recsys.decoding import (
     StaticDecodingIndex,
     build_static_decoding_random_model,
+    load_or_build_static_decoding_index,
+    resolve_dense_lookup_layers,
     static_decoding_constrained_beam_search,
     static_decoding_generate_and_apply_logprobs_mask,
     static_decoding_generate_and_apply_logprobs_mask_jax,
@@ -18,7 +20,6 @@ from recsys.decoding import (
 )
 from recsys.decoding.naive_trie import SemanticIdTrie
 from recsys.semantic_id import SemanticIdCodec
-from scripts.semantic_id import resolve_dense_lookup_layers
 
 
 def test_static_decoding_dependency_entrypoints_are_available() -> None:
@@ -287,6 +288,33 @@ def test_resolve_dense_lookup_layers_uses_static_decoding_auto_rule() -> None:
 
     assert resolve_dense_lookup_layers(codec=codec, value="auto") == 2
     assert resolve_dense_lookup_layers(codec=codec, value="1") == 1
+
+
+def test_load_or_build_static_decoding_index_builds_from_codec() -> None:
+    codec = SemanticIdCodec({10: [1, 2, 3], 20: [1, 4, 5]})
+
+    index = load_or_build_static_decoding_index(
+        codec=codec,
+        static_decoding_index_path=None,
+    )
+
+    assert index.dense_lookup_layers == 2
+    assert index.contains([1, 2, 3])
+    assert index.contains([1, 4, 5])
+
+
+def test_load_or_build_static_decoding_index_loads_and_validates_npz(tmp_path: Path) -> None:
+    codec = SemanticIdCodec({10: [1, 2], 20: [3, 4]})
+    saved_index = StaticDecodingIndex.from_codec(codec, dense_lookup_layers=1)
+    path = saved_index.save_npz(tmp_path / "static_decoding.npz")
+
+    index = load_or_build_static_decoding_index(
+        codec=codec,
+        static_decoding_index_path=path,
+    )
+
+    assert index.allowed_next_tokens([1]) == (2,)
+    assert index.allowed_next_tokens([3]) == (4,)
 
 
 def test_validate_static_decoding_index_matches_codec_detects_missing_ids() -> None:

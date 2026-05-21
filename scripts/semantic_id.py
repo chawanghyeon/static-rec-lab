@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from recsys.decoding import StaticDecodingIndex
+from recsys.decoding import StaticDecodingIndex, resolve_dense_lookup_layers
 from recsys.semantic_id import (
     HierarchicalKMeansConfig,
     ItemEmbeddingConfig,
@@ -167,29 +167,6 @@ def build_static_decoding_index(args: argparse.Namespace) -> None:
     print(f"- csr_indptr_shape: {tuple(index.csr_indptr.shape)}")
     print(f"- dense_mask_shape: {tuple(index.dense_mask.shape)}")
     print(f"- output: {output_path}")
-
-
-def resolve_dense_lookup_layers(*, codec: SemanticIdCodec, value: str) -> int:
-    """CLI 입력에서 static_decoding dense lookup layer 수를 결정한다."""
-    depths = {len(semantic_id) for semantic_id in codec.item_to_semantic_id.values()}
-    if len(depths) != 1:
-        msg = f"모든 Semantic ID 길이가 같아야 합니다: {sorted(depths)}"
-        raise ValueError(msg)
-    depth = next(iter(depths), 0)
-    if depth < 2:
-        msg = "static_decoding build_static_index는 길이 2 이상의 Semantic ID가 필요합니다."
-        raise ValueError(msg)
-    if value == "auto":
-        return min(2, depth - 1)
-
-    dense_lookup_layers = int(value)
-    if dense_lookup_layers < 1 or dense_lookup_layers >= depth:
-        msg = (
-            "dense_lookup_layers는 1 이상이고 Semantic ID 길이보다 작아야 합니다: "
-            f"dense_lookup_layers={dense_lookup_layers}, depth={depth}"
-        )
-        raise ValueError(msg)
-    return dense_lookup_layers
 
 
 if __name__ == "__main__":

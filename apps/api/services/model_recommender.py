@@ -11,18 +11,19 @@ import pandas as pd
 import torch
 
 from apps.api.services.base import RecommendedItem
+from recsys.data import coerce_item_ids
 from recsys.decoding import (
+    STATIC_DECODING_DECODER_NAME,
     StaticDecodingIndex,
     StaticDecodingTorchIndex,
-    validate_static_decoding_index_matches_codec,
+    load_or_build_static_decoding_index,
 )
 from recsys.models import (
     generate_semantic_ids_with_static_decoding,
     load_checkpoint,
+    resolve_torch_device,
 )
 from recsys.semantic_id import SemanticIdCodec, UnknownSemanticIdError
-
-STATIC_DECODING_DECODER_NAME = "static_decoding_pt"
 
 
 @dataclass(frozen=True)
@@ -58,7 +59,7 @@ class ModelRecommendationService:
         self._codec = codec
         self._device = device
         self.decoder_name = STATIC_DECODING_DECODER_NAME
-        self._static_decoding_index: StaticDecodingIndex = _load_or_build_static_decoding_index(
+        self._static_decoding_index: StaticDecodingIndex = load_or_build_static_decoding_index(
             codec=codec,
             static_decoding_index_path=static_decoding_index_path,
         )
@@ -74,7 +75,7 @@ class ModelRecommendationService:
     @classmethod
     def from_config(cls, config: ModelRecommendationConfig) -> ModelRecommendationService:
         """파일 경로 기반 설정에서 service를 생성한다."""
-        device = _resolve_device(config.device)
+        device = resolve_torch_device(config.device)
         model, item_to_index = load_checkpoint(config.checkpoint_path, device=device)
         codec = SemanticIdCodec.load_json(config.semantic_id_path)
         user_histories = load_user_histories(config.user_history_path)
@@ -143,57 +144,5 @@ def load_user_histories(path: str | Path) -> dict[int, tuple[int, ...]]:
     histories: dict[int, tuple[int, ...]] = {}
     for row in frame.itertuples(index=False):
         user_id = int(cast(Any, row.user_id))
-        histories[user_id] = _normalize_history(row.history_item_ids)
+        histories[user_id] = coerce_item_ids(row.history_item_ids)
     return histories
-
-
-def _static_decoding_dense_lookup_layers(codec: SemanticIdCodec) -> int:
-    depths = {len(semantic_id) for semantic_id in codec.item_to_semantic_id.values()}
-    if len(depths) != 1:
-        msg = f"모든 Semantic ID 길이가 같아야 합니다: {sorted(depths)}"
-        raise ValueError(msg)
-    depth = next(iter(depths), 0)
-    if depth < 2:
-        msg = "static_decoding build_static_index는 길이 2 이상의 Semantic ID가 필요합니다."
-        raise ValueError(msg)
-    return min(2, depth - 1)
-
-
-def _load_or_build_static_decoding_index(
-    *,
-    codec: SemanticIdCodec,
-    static_decoding_index_path: Path | None,
-) -> StaticDecodingIndex:
-    if static_decoding_index_path is None:
-        return StaticDecodingIndex.from_codec(
-            codec,
-            dense_lookup_layers=_static_decoding_dense_lookup_layers(codec),
-        )
-    index = StaticDecodingIndex.load_npz(static_decoding_index_path)
-    validate_static_decoding_index_matches_codec(index=index, codec=codec)
-    return index
-
-
-def _normalize_history(history: object) -> tuple[int, ...]:
-    if history is None:
-        return ()
-    if isinstance(history, float) and pd.isna(history):
-        return ()
-    if isinstance(history, str):
-        msg = "history_item_ids는 문자열이 아니라 정수 sequence여야 합니다."
-        raise ValueError(msg)
-    return tuple(int(cast(Any, item_id)) for item_id in cast(Sequence[object], history))
-
-
-def _resolve_device(value: str) -> torch.device:
-    if value == "cpu":
-        return torch.device("cpu")
-    if value == "cuda":
-        return torch.device("cuda")
-    if value == "mps":
-        return torch.device("mps")
-    if torch.cuda.is_available():
-        return torch.device("cuda")
-    if torch.backends.mps.is_available():
-        return torch.device("mps")
-    return torch.device("cpu")

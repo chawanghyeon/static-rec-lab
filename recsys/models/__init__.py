@@ -18,6 +18,7 @@ from recsys.models.dataset import (
     collate_generative_examples,
     infer_semantic_vocab_size,
 )
+from recsys.models.device import resolve_torch_device
 from recsys.models.generative_retriever import GenerativeRetriever, GenerativeRetrieverConfig
 from recsys.models.inference import (
     generate_semantic_ids_batch_with_static_decoding,
@@ -57,6 +58,7 @@ __all__ = [
     "infer_semantic_vocab_size",
     "load_checkpoint",
     "move_batch_to_device",
+    "resolve_torch_device",
     "save_checkpoint",
     "train_one_epoch",
 ]

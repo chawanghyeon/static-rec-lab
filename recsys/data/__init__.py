@@ -22,6 +22,7 @@ from recsys.data.preprocess import (
     sort_interactions,
     write_split_parquets,
 )
+from recsys.data.sequences import coerce_item_ids
 
 __all__ = [
     "DEFAULT_MOVIELENS_DATASET",
@@ -31,6 +32,7 @@ __all__ = [
     "PreprocessResult",
     "SequenceExample",
     "build_sequence_examples",
+    "coerce_item_ids",
     "download_file",
     "download_movielens",
     "examples_to_frame",

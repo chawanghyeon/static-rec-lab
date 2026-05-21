@@ -13,6 +13,8 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from sklearn.preprocessing import normalize  # type: ignore[import-untyped]
 
+from recsys.data import coerce_item_ids
+
 
 @dataclass(frozen=True)
 class ItemEmbeddingConfig:
@@ -211,7 +213,7 @@ def _collect_item_ids_from_frame(train_frame: pd.DataFrame) -> tuple[int, ...]:
         for item_id in cast(Iterable[Any], train_frame["target_item_id"].unique().tolist())
     }
     for history_item_ids in cast(Iterable[Any], train_frame["history_item_ids"].tolist()):
-        item_ids.update(_coerce_item_ids(history_item_ids))
+        item_ids.update(coerce_item_ids(history_item_ids))
     return tuple(sorted(item_ids))
 
 
@@ -240,7 +242,7 @@ def _flatten_history_lists(
     sources: list[int] = []
     parent_indices: list[int] = []
     for parent_index, history_value in enumerate(history_values):
-        history_item_ids = _coerce_item_ids(history_value)[-max_history_items:]
+        history_item_ids = coerce_item_ids(history_value)[-max_history_items:]
         sources.extend(history_item_ids)
         parent_indices.extend([parent_index] * len(history_item_ids))
 
@@ -317,14 +319,6 @@ def _hash_signs(item_ids: np.ndarray, random_state: int) -> np.ndarray:
     seed = np.uint64(random_state + 0x85EBCA6B)
     hashed = values * np.uint64(14029467366897019727) + seed
     return np.where((hashed & np.uint64(1)) == 0, 1.0, -1.0).astype(np.float64)
-
-
-def _coerce_item_ids(value: Any) -> list[int]:
-    if value is None:
-        return []
-    if isinstance(value, int):
-        return [value]
-    return [int(item_id) for item_id in value]
 
 
 def _safe_log_scale(values: np.ndarray) -> np.ndarray:

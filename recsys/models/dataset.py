@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -13,6 +13,7 @@ import pyarrow.parquet as pq
 import torch
 from torch.utils.data import Dataset, IterableDataset, get_worker_info
 
+from recsys.data import coerce_item_ids
 from recsys.semantic_id import SemanticIdCodec, UnknownItemIdError
 
 PAD_ITEM_INDEX = 0
@@ -113,7 +114,7 @@ class GenerativeParquetIterableDataset(IterableDataset[GenerativeExample]):
                 except UnknownItemIdError:
                     continue
 
-                history = _normalize_history(row.history_item_ids)
+                history = coerce_item_ids(row.history_item_ids)
                 yield GenerativeExample(
                     history_item_indices=tuple(
                         self._item_to_index.get(item_id, UNK_ITEM_INDEX) for item_id in history
@@ -225,7 +226,7 @@ def build_generative_dataset(
         except UnknownItemIdError:
             continue
 
-        history = _normalize_history(row.history_item_ids)
+        history = coerce_item_ids(row.history_item_ids)
         examples.append(
             GenerativeExample(
                 history_item_indices=tuple(
@@ -251,7 +252,7 @@ def build_item_index(frame: pd.DataFrame, codec: SemanticIdCodec) -> dict[int, i
     item_ids: set[int] = set(codec.item_to_semantic_id)
     for row in frame.itertuples(index=False):
         item_ids.add(int(cast(Any, row.target_item_id)))
-        item_ids.update(_normalize_history(row.history_item_ids))
+        item_ids.update(coerce_item_ids(row.history_item_ids))
     return {item_id: index for index, item_id in enumerate(sorted(item_ids), start=2)}
 
 
@@ -428,17 +429,4 @@ def _map_history_to_indices(
     history: object,
     item_to_index: Mapping[int, int],
 ) -> tuple[int, ...]:
-    return tuple(
-        item_to_index.get(item_id, UNK_ITEM_INDEX) for item_id in _normalize_history(history)
-    )
-
-
-def _normalize_history(history: object) -> tuple[int, ...]:
-    if history is None:
-        return ()
-    if isinstance(history, float) and pd.isna(history):
-        return ()
-    if isinstance(history, str):
-        msg = "history_item_ids는 문자열이 아니라 정수 sequence여야 합니다."
-        raise ValueError(msg)
-    return tuple(int(cast(Any, item_id)) for item_id in cast(Iterable[object], history))
+    return tuple(item_to_index.get(item_id, UNK_ITEM_INDEX) for item_id in coerce_item_ids(history))

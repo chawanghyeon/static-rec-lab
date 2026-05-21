@@ -5,82 +5,33 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from importlib import import_module
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import numpy as np
 import torch
 import torch.nn.functional as F
 
 from recsys.decoding.beam_search import BeamSearchResult
+from recsys.decoding.static_dependency import (
+    STATIC_DECODING_COMMIT,
+    STATIC_DECODING_REPOSITORY,
+    load_static_decoding_build_static_index,
+    load_static_decoding_jax,
+    load_static_decoding_jax_numpy,
+    load_static_decoding_jax_random_model_factory,
+    load_static_decoding_jax_sparse_mask_kernel,
+    load_static_decoding_jax_sparse_transition_harness,
+    load_static_decoding_random_model_factory,
+    load_static_decoding_sparse_mask_kernel,
+    load_static_decoding_sparse_transition_harness,
+)
 from recsys.semantic_id import SemanticIdCodec
 
-STATIC_DECODING_REPOSITORY = "https://github.com/youtube/static-constraint-decoding"
-STATIC_DECODING_COMMIT = "c24f9dc8b9b8045716fff7ef750a1f0cb31c6f57"
-
-StaticDecodingBuildIndex = Callable[
-    [np.ndarray, int, int],
-    tuple[np.ndarray, np.ndarray, tuple[int, ...], np.ndarray, np.ndarray, np.ndarray],
-]
-StaticDecodingSparseMaskKernel = Callable[
-    [torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, int, int, torch.device],
-    tuple[torch.Tensor, torch.Tensor, torch.Tensor],
-]
-StaticDecodingJaxSparseMaskKernel = Callable[
-    [Any, Any, Any, Any, int, int],
-    tuple[Any, Any, Any],
-]
-StaticDecodingJaxSparseTransitionHarness = Callable[
-    [
-        Any,
-        Any,
-        int,
-        int,
-        int,
-        int,
-        int,
-        int,
-        tuple[int, ...],
-        Any,
-        Any,
-        Any,
-        Any,
-        Any,
-        int,
-    ],
-    Any,
-]
-StaticDecodingSparseTransitionHarness = Callable[
-    [
-        torch.nn.Module,
-        int,
-        int,
-        int,
-        int,
-        int,
-        int,
-        tuple[int, ...],
-        torch.Tensor,
-        torch.Tensor,
-        torch.Tensor,
-        torch.Tensor,
-        torch.Tensor,
-        torch.device,
-        int,
-    ],
-    torch.Tensor,
-]
-StaticDecodingRandomModelFactory = Callable[[int, torch.device], torch.nn.Module]
-StaticDecodingJaxRandomModelFactory = Callable[[int], Any]
 StaticDecodingBeamLogitProvider = Callable[
     [tuple[tuple[int, ...], ...], torch.Tensor, int],
     torch.Tensor,
 ]
-
-
-class StaticDecodingDependencyError(ImportError):
-    """Raised when the STATIC package is unavailable."""
 
 
 @dataclass(frozen=True)
@@ -137,7 +88,7 @@ class StaticDecodingIndex:
             )
             raise ValueError(msg)
 
-        build_static_index = _load_static_decoding_build_static_index()
+        build_static_index = load_static_decoding_build_static_index()
         packed_csr, csr_indptr, layer_max_branches, start_mask, dense_mask, dense_states = (
             build_static_index(semantic_id_array, resolved_vocab_size, dense_lookup_layers)
         )
@@ -312,7 +263,7 @@ def static_decoding_generate_and_apply_logprobs_mask(
         raise ValueError(msg)
 
     limit = max(1, int(index.layer_max_branches[prefix_length]))
-    kernel = _load_static_decoding_sparse_mask_kernel()
+    kernel = load_static_decoding_sparse_mask_kernel()
     return kernel(
         flat_logprobs,
         flat_states,
@@ -343,9 +294,9 @@ def static_decoding_generate_and_apply_logprobs_mask_jax(
         msg = f"prefix_length가 Semantic ID depth 범위를 벗어났습니다: {prefix_length}"
         raise ValueError(msg)
 
-    jnp = _load_static_decoding_jax_numpy()
+    jnp = load_static_decoding_jax_numpy()
     limit = max(1, int(index.layer_max_branches[prefix_length]))
-    kernel = _load_static_decoding_jax_sparse_mask_kernel()
+    kernel = load_static_decoding_jax_sparse_mask_kernel()
     return kernel(
         flat_logprobs,
         flat_states,
@@ -389,7 +340,7 @@ def static_decoding_sparse_transition_torch(
             f"torch_index={resolved_torch_index.device}, device={device}"
         )
         raise ValueError(msg)
-    harness = _load_static_decoding_sparse_transition_harness()
+    harness = load_static_decoding_sparse_transition_harness()
     return harness(
         model,
         batch_size,
@@ -434,15 +385,15 @@ def static_decoding_sparse_transition_jax(
         msg = "static_decoding JAX harness는 dense_lookup_layers=1 또는 2만 지원합니다."
         raise ValueError(msg)
 
-    jax = _load_static_decoding_jax()
-    jnp = _load_static_decoding_jax_numpy()
+    jax = load_static_decoding_jax()
+    jnp = load_static_decoding_jax_numpy()
     resolved_model = (
         build_static_decoding_jax_random_model(vocab_size=index.vocab_size)
         if model is None
         else model
     )
     resolved_key = jax.random.PRNGKey(random_seed) if key is None else key
-    harness = _load_static_decoding_jax_sparse_transition_harness()
+    harness = load_static_decoding_jax_sparse_transition_harness()
     return harness(
         resolved_model,
         resolved_key,
@@ -467,7 +418,7 @@ def build_static_decoding_random_model(*, vocab_size: int, device: torch.device)
     if vocab_size < 1:
         msg = "vocab_size는 1 이상이어야 합니다."
         raise ValueError(msg)
-    factory = _load_static_decoding_random_model_factory()
+    factory = load_static_decoding_random_model_factory()
     return factory(vocab_size, device)
 
 
@@ -476,7 +427,7 @@ def build_static_decoding_jax_random_model(*, vocab_size: int) -> Any:
     if vocab_size < 1:
         msg = "vocab_size는 1 이상이어야 합니다."
         raise ValueError(msg)
-    factory = _load_static_decoding_jax_random_model_factory()
+    factory = load_static_decoding_jax_random_model_factory()
     return factory(vocab_size)
 
 
@@ -662,114 +613,6 @@ def _dense_candidates(
     top_logprobs, top_tokens = torch.topk(masked_logprobs, limit, dim=-1)
     next_states = torch_index.dense_states[parent_tokens.unsqueeze(1), top_tokens.long()]
     return top_logprobs, top_tokens, next_states
-
-
-def _load_static_decoding_build_static_index() -> StaticDecodingBuildIndex:
-    try:
-        module = import_module("static_decoding.csr_utils")
-    except ImportError as exc:
-        msg = (
-            "static_decoding package `static_decoding`을 import할 수 없습니다. "
-            "`uv lock` 및 `uv sync` 후 다시 실행하세요."
-        )
-        raise StaticDecodingDependencyError(msg) from exc
-    return cast(StaticDecodingBuildIndex, module.build_static_index)
-
-
-def _load_static_decoding_sparse_mask_kernel() -> StaticDecodingSparseMaskKernel:
-    try:
-        module = import_module("static_decoding.decoding_pt")
-    except ImportError as exc:
-        msg = (
-            "static_decoding PyTorch decoder를 import할 수 없습니다. "
-            "`uv lock` 및 `uv sync` 후 다시 실행하세요."
-        )
-        raise StaticDecodingDependencyError(msg) from exc
-    return cast(StaticDecodingSparseMaskKernel, module.generate_and_apply_logprobs_mask)
-
-
-def _load_static_decoding_jax_sparse_mask_kernel() -> StaticDecodingJaxSparseMaskKernel:
-    try:
-        module = import_module("static_decoding.decoding_jax")
-    except ImportError as exc:
-        msg = (
-            "static_decoding JAX decoder를 import할 수 없습니다. "
-            "`uv lock` 및 `uv sync` 후 다시 실행하세요."
-        )
-        raise StaticDecodingDependencyError(msg) from exc
-    return cast(StaticDecodingJaxSparseMaskKernel, module.generate_and_apply_logprobs_mask)
-
-
-def _load_static_decoding_jax_sparse_transition_harness() -> (
-    StaticDecodingJaxSparseTransitionHarness
-):
-    try:
-        module = import_module("static_decoding.decoding_jax")
-    except ImportError as exc:
-        msg = (
-            "static_decoding JAX decoder를 import할 수 없습니다. "
-            "`uv lock` 및 `uv sync` 후 다시 실행하세요."
-        )
-        raise StaticDecodingDependencyError(msg) from exc
-    return cast(StaticDecodingJaxSparseTransitionHarness, module.sparse_transition_jax)
-
-
-def _load_static_decoding_jax_random_model_factory() -> StaticDecodingJaxRandomModelFactory:
-    try:
-        module = import_module("static_decoding.decoding_jax")
-    except ImportError as exc:
-        msg = (
-            "static_decoding JAX decoder를 import할 수 없습니다. "
-            "`uv lock` 및 `uv sync` 후 다시 실행하세요."
-        )
-        raise StaticDecodingDependencyError(msg) from exc
-    return cast(StaticDecodingJaxRandomModelFactory, module.RandomModel)
-
-
-def _load_static_decoding_jax() -> Any:
-    try:
-        return import_module("jax")
-    except ImportError as exc:
-        msg = (
-            "JAX를 import할 수 없습니다. static_decoding JAX decoder를 사용하려면 "
-            "`uv lock` 및 `uv sync` 후 다시 실행하세요."
-        )
-        raise StaticDecodingDependencyError(msg) from exc
-
-
-def _load_static_decoding_jax_numpy() -> Any:
-    try:
-        return import_module("jax.numpy")
-    except ImportError as exc:
-        msg = (
-            "JAX numpy를 import할 수 없습니다. static_decoding JAX decoder를 사용하려면 "
-            "`uv lock` 및 `uv sync` 후 다시 실행하세요."
-        )
-        raise StaticDecodingDependencyError(msg) from exc
-
-
-def _load_static_decoding_sparse_transition_harness() -> StaticDecodingSparseTransitionHarness:
-    try:
-        module = import_module("static_decoding.decoding_pt")
-    except ImportError as exc:
-        msg = (
-            "static_decoding PyTorch decoder를 import할 수 없습니다. "
-            "`uv lock` 및 `uv sync` 후 다시 실행하세요."
-        )
-        raise StaticDecodingDependencyError(msg) from exc
-    return cast(StaticDecodingSparseTransitionHarness, module.sparse_transition_torch)
-
-
-def _load_static_decoding_random_model_factory() -> StaticDecodingRandomModelFactory:
-    try:
-        module = import_module("static_decoding.decoding_pt")
-    except ImportError as exc:
-        msg = (
-            "static_decoding PyTorch decoder를 import할 수 없습니다. "
-            "`uv lock` 및 `uv sync` 후 다시 실행하세요."
-        )
-        raise StaticDecodingDependencyError(msg) from exc
-    return cast(StaticDecodingRandomModelFactory, module.RandomModel)
 
 
 def _normalize_semantic_ids(semantic_ids: Iterable[Iterable[Any]]) -> np.ndarray:
