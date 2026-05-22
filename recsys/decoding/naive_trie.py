@@ -6,6 +6,15 @@ from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
+from recsys.decoding.tokens import (
+    normalize_token as _normalize_token,
+)
+from recsys.decoding.tokens import (
+    normalize_tokens as _normalize_tokens,
+)
+from recsys.decoding.tokens import (
+    try_normalize_tokens as _try_normalize_tokens,
+)
 from recsys.semantic_id import SemanticIdCodec
 
 
@@ -130,40 +139,3 @@ class SemanticIdTrie:
         if state < 0 or state >= len(self._nodes):
             msg = f"알 수 없는 trie state입니다: {state}"
             raise ValueError(msg)
-
-
-def _normalize_tokens(
-    tokens: Iterable[Any],
-    *,
-    allow_empty: bool,
-) -> tuple[int, ...]:
-    if isinstance(tokens, str):
-        msg = "token sequence는 문자열이 아니라 정수 iterable이어야 합니다."
-        raise ValueError(msg)
-
-    normalized = tuple(_normalize_token(token) for token in tokens)
-    if not normalized and not allow_empty:
-        msg = "Semantic ID sequence는 비어 있을 수 없습니다."
-        raise ValueError(msg)
-    return normalized
-
-
-def _try_normalize_tokens(
-    tokens: Iterable[Any],
-    *,
-    allow_empty: bool,
-) -> tuple[int, ...] | None:
-    try:
-        return _normalize_tokens(tokens, allow_empty=allow_empty)
-    except ValueError:
-        return None
-
-
-def _normalize_token(token: Any) -> int:
-    if isinstance(token, bool) or not isinstance(token, int):
-        msg = f"token은 bool이 아닌 정수여야 합니다: {token!r}"
-        raise ValueError(msg)
-    if token < 0:
-        msg = f"token은 0 이상이어야 합니다: {token}"
-        raise ValueError(msg)
-    return token

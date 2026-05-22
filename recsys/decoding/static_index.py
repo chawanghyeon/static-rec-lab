@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from recsys.decoding.static_decoding import (
+from recsys.decoding.static_artifact import (
     StaticDecodingIndex,
     validate_static_decoding_index_matches_codec,
 )

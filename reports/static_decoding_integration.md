@@ -27,13 +27,13 @@ STATIC constraint 계산은 `static_decoding` package가 담당합니다.
 
 | `static_decoding` 함수 | 프로젝트 사용 위치 | 역할 |
 | --- | --- | --- |
-| `static_decoding.csr_utils.build_static_index` | `recsys/decoding/static_decoding.py` | Semantic ID catalog를 STATIC index 배열로 변환 |
-| `static_decoding.decoding_pt.generate_and_apply_logprobs_mask` | 추론, 벤치마크, 테스트 | PyTorch sparse tail 후보 수집 |
-| `static_decoding.decoding_jax.generate_and_apply_logprobs_mask` | 벤치마크, 테스트 | JAX sparse tail 후보 수집 |
-| `static_decoding.decoding_pt.sparse_transition_torch` | 벤치마크, 테스트 | `static_decoding` PyTorch decoding harness 동작 검증 |
-| `static_decoding.decoding_jax.sparse_transition_jax` | 벤치마크, 테스트 | `static_decoding` JAX decoding harness 동작 검증 |
-| `static_decoding.decoding_pt.RandomModel` | 벤치마크, 테스트 | `static_decoding` harness용 dummy model |
-| `static_decoding.decoding_jax.RandomModel` | 벤치마크, 테스트 | `static_decoding` JAX harness용 dummy model |
+| `static_decoding.csr_utils.build_static_index` | `recsys/decoding/static_artifact.py` | Semantic ID catalog를 STATIC index 배열로 변환 |
+| `static_decoding.decoding_pt.generate_and_apply_logprobs_mask` | `recsys/decoding/static_runtime.py`, 추론, 벤치마크, 테스트 | PyTorch sparse tail 후보 수집 |
+| `static_decoding.decoding_jax.generate_and_apply_logprobs_mask` | `recsys/decoding/static_runtime.py`, 벤치마크, 테스트 | JAX sparse tail 후보 수집 |
+| `static_decoding.decoding_pt.sparse_transition_torch` | `recsys/decoding/static_runtime.py`, 벤치마크, 테스트 | `static_decoding` PyTorch decoding harness 동작 검증 |
+| `static_decoding.decoding_jax.sparse_transition_jax` | `recsys/decoding/static_runtime.py`, 벤치마크, 테스트 | `static_decoding` JAX decoding harness 동작 검증 |
+| `static_decoding.decoding_pt.RandomModel` | `recsys/decoding/static_runtime.py`, 벤치마크, 테스트 | `static_decoding` harness용 dummy model |
+| `static_decoding.decoding_jax.RandomModel` | `recsys/decoding/static_runtime.py`, 벤치마크, 테스트 | `static_decoding` JAX harness용 dummy model |
 
 ## 프로젝트 실행 경로
 
@@ -63,6 +63,8 @@ artifacts/semantic_id/static_decoding_index.npz
 
 그래서 추천 모델 inference에서는 beam search loop만 프로젝트 모델 입력 형태에 맞게 감싸고,
 constraint index와 sparse candidate gather는 `static_decoding` package 함수를 직접 호출합니다.
+프로젝트 모델에 맞춘 beam loop는 `recsys/decoding/static_beam_search.py`에 있고,
+`recsys/decoding/static_decoding.py`는 이전 import 경로를 위한 얇은 export 파일입니다.
 
 정리하면 다음과 같습니다.
 

@@ -10,6 +10,12 @@ import numpy as np
 from scipy import sparse  # type: ignore[import-untyped]
 
 from recsys.decoding.naive_trie import SemanticIdTrie
+from recsys.decoding.tokens import (
+    normalize_token as _normalize_token,
+)
+from recsys.decoding.tokens import (
+    try_normalize_tokens as _try_normalize_tokens,
+)
 from recsys.semantic_id import SemanticIdCodec
 
 INVALID_STATE = -1
@@ -210,43 +216,6 @@ def _coerce_int_array(values: Iterable[Any]) -> np.ndarray:
 
     msg = "state/token batch 값은 bool이 아닌 정수여야 합니다."
     raise ValueError(msg)
-
-
-def _normalize_tokens(
-    tokens: Iterable[Any],
-    *,
-    allow_empty: bool,
-) -> tuple[int, ...]:
-    if isinstance(tokens, str):
-        msg = "token sequence는 문자열이 아니라 정수 iterable이어야 합니다."
-        raise ValueError(msg)
-
-    normalized = tuple(_normalize_token(token) for token in tokens)
-    if not normalized and not allow_empty:
-        msg = "Semantic ID sequence는 비어 있을 수 없습니다."
-        raise ValueError(msg)
-    return normalized
-
-
-def _try_normalize_tokens(
-    tokens: Iterable[Any],
-    *,
-    allow_empty: bool,
-) -> tuple[int, ...] | None:
-    try:
-        return _normalize_tokens(tokens, allow_empty=allow_empty)
-    except ValueError:
-        return None
-
-
-def _normalize_token(token: Any) -> int:
-    if isinstance(token, (bool, np.bool_)) or not isinstance(token, (int, np.integer)):
-        msg = f"token은 bool이 아닌 정수여야 합니다: {token!r}"
-        raise ValueError(msg)
-    if token < 0:
-        msg = f"token은 0 이상이어야 합니다: {token}"
-        raise ValueError(msg)
-    return int(token)
 
 
 def _normalize_token_like_value(value: Any) -> int:
