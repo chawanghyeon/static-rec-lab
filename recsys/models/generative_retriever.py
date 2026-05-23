@@ -59,6 +59,21 @@ class GenerativeRetriever(nn.Module):
             config.semantic_id_length,
             config.d_model,
         )
+        self.register_buffer(
+            "_history_position_ids",
+            torch.arange(config.max_history_length).unsqueeze(0),
+            persistent=False,
+        )
+        self.register_buffer(
+            "_target_position_ids",
+            torch.arange(config.semantic_id_length).unsqueeze(0),
+            persistent=False,
+        )
+        self.register_buffer(
+            "_target_causal_mask",
+            _causal_mask(config.semantic_id_length),
+            persistent=False,
+        )
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=config.d_model,
             nhead=config.num_heads,
@@ -115,19 +130,15 @@ class GenerativeRetriever(nn.Module):
             )
             raise ValueError(msg)
 
-        src = self.item_embedding(history_item_ids) + self._position_embeddings(
-            self.history_position_embedding,
-            batch_size=history_item_ids.shape[0],
-            sequence_length=history_length,
-            device=history_item_ids.device,
+        history_positions = cast(torch.Tensor, self._history_position_ids)[:, :history_length]
+        target_positions = cast(torch.Tensor, self._target_position_ids)[:, :target_length]
+        src = self.item_embedding(history_item_ids) + self.history_position_embedding(
+            history_positions
         )
-        tgt = self.token_embedding(decoder_input_ids) + self._position_embeddings(
-            self.target_position_embedding,
-            batch_size=decoder_input_ids.shape[0],
-            sequence_length=target_length,
-            device=decoder_input_ids.device,
+        tgt = self.token_embedding(decoder_input_ids) + self.target_position_embedding(
+            target_positions
         )
-        target_mask = _causal_mask(target_length, decoder_input_ids.device)
+        target_mask = cast(torch.Tensor, self._target_causal_mask)[:target_length, :target_length]
         memory = self.encoder(
             src,
             src_key_padding_mask=history_padding_mask,
@@ -140,17 +151,6 @@ class GenerativeRetriever(nn.Module):
             memory_key_padding_mask=history_padding_mask,
         )
         return cast(torch.Tensor, self.output_projection(hidden))
-
-    @staticmethod
-    def _position_embeddings(
-        embedding: nn.Embedding,
-        *,
-        batch_size: int,
-        sequence_length: int,
-        device: torch.device,
-    ) -> torch.Tensor:
-        positions = torch.arange(sequence_length, device=device).unsqueeze(0)
-        return cast(torch.Tensor, embedding(positions).expand(batch_size, sequence_length, -1))
 
 
 def _validate_config(config: GenerativeRetrieverConfig) -> None:
@@ -174,8 +174,8 @@ def _validate_config(config: GenerativeRetrieverConfig) -> None:
         raise ValueError(msg)
 
 
-def _causal_mask(sequence_length: int, device: torch.device) -> torch.Tensor:
+def _causal_mask(sequence_length: int) -> torch.Tensor:
     return torch.triu(
-        torch.full((sequence_length, sequence_length), float("-inf"), device=device),
+        torch.full((sequence_length, sequence_length), float("-inf")),
         diagonal=1,
     )

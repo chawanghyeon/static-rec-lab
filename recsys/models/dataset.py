@@ -63,18 +63,36 @@ class GenerativeParquetBatchIterableDataset(IterableDataset[GenerativeBatch]):
 
     def __iter__(self) -> Iterator[GenerativeBatch]:
         worker_info = get_worker_info()
-        if worker_info is not None and worker_info.num_workers > 1:
-            msg = "GenerativeParquetBatchIterableDataset은 num_workers=0 또는 1에서 사용하세요."
-            raise RuntimeError(msg)
-
-        yielded = 0
+        worker_id = 0 if worker_info is None else worker_info.id
+        num_workers = 1 if worker_info is None else worker_info.num_workers
         pq_module = cast(Any, pq)
         parquet_file = pq_module.ParquetFile(self._path)
+        row_groups = _row_groups_for_worker(
+            parquet_file=parquet_file,
+            worker_id=worker_id,
+            num_workers=num_workers,
+        )
+        if not row_groups:
+            return
 
+        active_workers = min(num_workers, int(parquet_file.num_row_groups))
+        worker_max_examples = _max_examples_for_worker(
+            max_examples=self._max_examples,
+            worker_id=worker_id,
+            num_workers=active_workers,
+        )
+        if worker_max_examples == 0:
+            return
+
+        yielded = 0
         for record_batch in parquet_file.iter_batches(
             batch_size=self._parquet_batch_size,
+            row_groups=row_groups,
             columns=["history_item_ids", "target_item_id"],
         ):
+            if worker_max_examples is not None and yielded >= worker_max_examples:
+                return
+
             history_item_ids, history_padding_mask, target_token_ids = (
                 _record_batch_to_generative_arrays(
                     record_batch,
@@ -85,8 +103,8 @@ class GenerativeParquetBatchIterableDataset(IterableDataset[GenerativeBatch]):
             if target_token_ids.shape[0] == 0:
                 continue
 
-            if self._max_examples is not None:
-                remaining = self._max_examples - yielded
+            if worker_max_examples is not None:
+                remaining = worker_max_examples - yielded
                 if remaining <= 0:
                     return
                 history_item_ids = history_item_ids[:remaining]
@@ -101,8 +119,35 @@ class GenerativeParquetBatchIterableDataset(IterableDataset[GenerativeBatch]):
                     target_token_ids[start:end],
                 )
                 yielded += int(target_token_ids[start:end].shape[0])
-                if self._max_examples is not None and yielded >= self._max_examples:
+                if worker_max_examples is not None and yielded >= worker_max_examples:
                     return
+
+
+def _row_groups_for_worker(
+    *,
+    parquet_file: Any,
+    worker_id: int,
+    num_workers: int,
+) -> list[int]:
+    return [
+        row_group_index
+        for row_group_index in range(int(parquet_file.num_row_groups))
+        if row_group_index % num_workers == worker_id
+    ]
+
+
+def _max_examples_for_worker(
+    *,
+    max_examples: int | None,
+    worker_id: int,
+    num_workers: int,
+) -> int | None:
+    if max_examples is None:
+        return None
+    examples_per_worker = max_examples // num_workers
+    if worker_id < max_examples % num_workers:
+        examples_per_worker += 1
+    return examples_per_worker
 
 
 def build_item_index_from_codec(codec: SemanticIdCodec) -> dict[int, int]:

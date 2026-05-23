@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import torch
+from torch.utils.data import DataLoader
 
 from recsys.evaluation import (
     STATIC_DECODING_DECODER_NAME,
@@ -74,6 +75,8 @@ def _add_train_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
     parser.add_argument("--max-valid-examples", type=int, default=None)
     parser.add_argument("--max-history-length", type=int, default=50)
     parser.add_argument("--parquet-batch-size", type=int, default=65_536)
+    parser.add_argument("--num-workers", type=int, default=0)
+    parser.add_argument("--prefetch-factor", type=int, default=2)
     parser.add_argument("--log-every-batches", type=int, default=250)
     parser.add_argument("--d-model", type=int, default=64)
     parser.add_argument("--num-heads", type=int, default=4)
@@ -86,6 +89,26 @@ def _add_train_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
         "--compile-model",
         action="store_true",
         help="torch.compile로 학습 모델을 컴파일합니다.",
+    )
+    parser.add_argument(
+        "--full-train-metrics",
+        action="store_true",
+        help="학습 batch에서도 token/sequence accuracy를 계산합니다. 속도는 느려질 수 있습니다.",
+    )
+    parser.add_argument(
+        "--matmul-precision",
+        choices=["highest", "high", "medium"],
+        default="high",
+    )
+    parser.add_argument(
+        "--amp",
+        action="store_true",
+        help="가능한 device에서 mixed precision autocast를 사용합니다.",
+    )
+    parser.add_argument(
+        "--amp-dtype",
+        choices=["float16", "bfloat16"],
+        default="float16",
     )
     parser.add_argument("--random-seed", type=int, default=42)
 
@@ -111,7 +134,19 @@ def _add_eval_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentPar
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--max-examples", type=int, default=None)
     parser.add_argument("--parquet-batch-size", type=int, default=65_536)
+    parser.add_argument("--num-workers", type=int, default=0)
+    parser.add_argument("--prefetch-factor", type=int, default=2)
     parser.add_argument("--device", choices=["auto", "cpu", "cuda", "mps"], default="auto")
+    parser.add_argument(
+        "--amp",
+        action="store_true",
+        help="가능한 device에서 mixed precision autocast를 사용합니다.",
+    )
+    parser.add_argument(
+        "--amp-dtype",
+        choices=["float16", "bfloat16"],
+        default="float16",
+    )
 
 
 def _add_eval_ranking_parser(
@@ -163,12 +198,15 @@ def train_generative(args: argparse.Namespace) -> None:
         raise ValueError("epochs는 1 이상이어야 합니다.")
     if args.batch_size < 1:
         raise ValueError("batch-size는 1 이상이어야 합니다.")
+    _validate_loader_options(args.num_workers, args.prefetch_factor)
+    torch.set_float32_matmul_precision(args.matmul_precision)
+    amp_dtype = _resolve_amp_dtype(args.amp_dtype)
 
     torch.manual_seed(args.random_seed)
     device = resolve_torch_device(args.device)
     codec = SemanticIdCodec.load_json(args.semantic_id_path)
     item_to_index = build_item_index_from_codec(codec)
-    train_loader: Iterable[GenerativeBatch] = GenerativeParquetBatchIterableDataset(
+    train_dataset = GenerativeParquetBatchIterableDataset(
         args.train_parquet,
         codec,
         item_to_index=item_to_index,
@@ -176,13 +214,25 @@ def train_generative(args: argparse.Namespace) -> None:
         max_examples=args.max_train_examples,
         parquet_batch_size=args.parquet_batch_size,
     )
-    valid_loader: Iterable[GenerativeBatch] = GenerativeParquetBatchIterableDataset(
+    valid_dataset = GenerativeParquetBatchIterableDataset(
         args.valid_parquet,
         codec,
         item_to_index=item_to_index,
         batch_size=args.batch_size,
         max_examples=args.max_valid_examples,
         parquet_batch_size=args.parquet_batch_size,
+    )
+    train_loader = _batch_stream(
+        train_dataset,
+        num_workers=args.num_workers,
+        prefetch_factor=args.prefetch_factor,
+        device=device,
+    )
+    valid_loader = _batch_stream(
+        valid_dataset,
+        num_workers=args.num_workers,
+        prefetch_factor=args.prefetch_factor,
+        device=device,
     )
     item_vocab_size = max(item_to_index.values(), default=1) + 1
     semantic_vocab_size = infer_semantic_vocab_size(codec)
@@ -216,12 +266,17 @@ def train_generative(args: argparse.Namespace) -> None:
             optimizer,
             device=device,
             log_every_batches=args.log_every_batches,
+            compute_accuracy=args.full_train_metrics,
+            use_amp=args.amp,
+            amp_dtype=amp_dtype,
         )
         valid_metrics = evaluate_model(
             train_model,
             valid_loader,
             device=device,
             log_every_batches=args.log_every_batches,
+            use_amp=args.amp,
+            amp_dtype=amp_dtype,
         )
         print(
             f"epoch={epoch} "
@@ -251,11 +306,13 @@ def train_generative(args: argparse.Namespace) -> None:
 def eval_generative(args: argparse.Namespace) -> None:
     if args.batch_size < 1:
         raise ValueError("batch-size는 1 이상이어야 합니다.")
+    _validate_loader_options(args.num_workers, args.prefetch_factor)
 
     device = resolve_torch_device(args.device)
+    amp_dtype = _resolve_amp_dtype(args.amp_dtype)
     model, item_to_index = load_checkpoint(args.checkpoint_path, device=device)
     codec = SemanticIdCodec.load_json(args.semantic_id_path)
-    dataloader: Iterable[GenerativeBatch] = GenerativeParquetBatchIterableDataset(
+    dataset = GenerativeParquetBatchIterableDataset(
         args.eval_parquet,
         codec,
         item_to_index=item_to_index,
@@ -263,7 +320,19 @@ def eval_generative(args: argparse.Namespace) -> None:
         max_examples=args.max_examples,
         parquet_batch_size=args.parquet_batch_size,
     )
-    metrics = evaluate_model(model, dataloader, device=device)
+    dataloader = _batch_stream(
+        dataset,
+        num_workers=args.num_workers,
+        prefetch_factor=args.prefetch_factor,
+        device=device,
+    )
+    metrics = evaluate_model(
+        model,
+        dataloader,
+        device=device,
+        use_amp=args.amp,
+        amp_dtype=amp_dtype,
+    )
     report_path = _write_report(args.report_path, metrics, args.eval_parquet)
 
     print("Generative retrieval 평가 완료")
@@ -371,6 +440,50 @@ def _print_evaluation(evaluation: GenerativeRankingEvaluation) -> None:
         f"unknown_targets={evaluation.unknown_target_examples}, "
         f"elapsed_ms={evaluation.elapsed_ms:.2f}"
     )
+
+
+def _batch_stream(
+    dataset: GenerativeParquetBatchIterableDataset,
+    *,
+    num_workers: int,
+    prefetch_factor: int,
+    device: torch.device,
+) -> Iterable[GenerativeBatch]:
+    if num_workers == 0:
+        return dataset
+    return cast(
+        Iterable[GenerativeBatch],
+        DataLoader(
+            dataset,
+            batch_size=None,
+            collate_fn=cast(Any, _identity_batch),
+            num_workers=num_workers,
+            prefetch_factor=prefetch_factor,
+            persistent_workers=True,
+            pin_memory=device.type == "cuda",
+        ),
+    )
+
+
+def _identity_batch(batch: GenerativeBatch) -> GenerativeBatch:
+    return batch
+
+
+def _validate_loader_options(num_workers: int, prefetch_factor: int) -> None:
+    if num_workers < 0:
+        msg = "num-workers는 0 이상이어야 합니다."
+        raise ValueError(msg)
+    if prefetch_factor < 1:
+        msg = "prefetch-factor는 1 이상이어야 합니다."
+        raise ValueError(msg)
+
+
+def _resolve_amp_dtype(name: str) -> torch.dtype:
+    if name == "float16":
+        return torch.float16
+    if name == "bfloat16":
+        return torch.bfloat16
+    raise ValueError(f"지원하지 않는 amp dtype입니다: {name}")
 
 
 if __name__ == "__main__":

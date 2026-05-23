@@ -31,50 +31,72 @@ def train_one_epoch(
     *,
     device: torch.device,
     log_every_batches: int | None = None,
+    compute_accuracy: bool = False,
+    use_amp: bool = False,
+    amp_dtype: torch.dtype = torch.float16,
 ) -> GenerativeTrainingMetrics:
     """Teacher forcing으로 한 epoch 학습한다."""
     if log_every_batches is not None and log_every_batches < 1:
         msg = "log_every_batches는 None이거나 1 이상이어야 합니다."
         raise ValueError(msg)
     model.train()
-    total_loss = 0.0
+    total_loss: torch.Tensor | None = None
     total_examples = 0
     total_tokens = 0
     correct_tokens = 0
     correct_sequences = 0
     loss_fn = nn.CrossEntropyLoss(ignore_index=PAD_TOKEN_ID, reduction="sum")
+    amp_module = cast(Any, torch.amp)
+    scaler = amp_module.GradScaler(
+        "cuda",
+        enabled=use_amp and device.type == "cuda" and amp_dtype == torch.float16,
+    )
 
     for batch_index, batch in enumerate(dataloader, start=1):
         batch = move_batch_to_device(batch, device)
-        optimizer.zero_grad()
-        logits = model(
-            batch.history_item_ids,
-            batch.history_padding_mask,
-            batch.decoder_input_ids,
-        )
-        loss = loss_fn(
-            logits.reshape(-1, logits.shape[-1]),
-            batch.target_token_ids.reshape(-1),
-        )
-        loss.backward()
-        optimizer.step()
+        optimizer.zero_grad(set_to_none=True)
+        with torch.autocast(
+            device_type=device.type,
+            dtype=amp_dtype,
+            enabled=_use_autocast(device=device, use_amp=use_amp),
+        ):
+            logits = model(
+                batch.history_item_ids,
+                batch.history_padding_mask,
+                batch.decoder_input_ids,
+            )
+            loss = loss_fn(
+                logits.reshape(-1, logits.shape[-1]),
+                batch.target_token_ids.reshape(-1),
+            )
+        if scaler.is_enabled():
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            loss.backward()
+            optimizer.step()
 
-        total_loss += float(loss.detach().cpu())
+        detached_loss = loss.detach()
+        total_loss = detached_loss if total_loss is None else total_loss + detached_loss
         total_examples += int(batch.target_token_ids.shape[0])
-        total_tokens += _num_target_tokens(batch.target_token_ids)
-        correct_tokens += _num_correct_tokens(logits.detach(), batch.target_token_ids)
-        correct_sequences += _num_correct_sequences(logits.detach(), batch.target_token_ids)
+        total_tokens += int(batch.target_token_ids.numel())
+        if compute_accuracy:
+            detached_logits = logits.detach()
+            correct_tokens += _num_correct_tokens(detached_logits, batch.target_token_ids)
+            correct_sequences += _num_correct_sequences(detached_logits, batch.target_token_ids)
         if log_every_batches is not None and batch_index % log_every_batches == 0:
+            synced_total_loss = _loss_value(total_loss)
             print(
                 "train "
                 f"batches={batch_index:,} "
                 f"examples={total_examples:,} "
-                f"loss={total_loss / max(total_tokens, 1):.6f}",
+                f"loss={synced_total_loss / max(total_tokens, 1):.6f}",
                 flush=True,
             )
 
     return _aggregate_metrics(
-        total_loss=total_loss,
+        total_loss=_loss_value(total_loss),
         total_examples=total_examples,
         total_tokens=total_tokens,
         correct_tokens=correct_tokens,
@@ -89,13 +111,15 @@ def evaluate_model(
     *,
     device: torch.device,
     log_every_batches: int | None = None,
+    use_amp: bool = False,
+    amp_dtype: torch.dtype = torch.float16,
 ) -> GenerativeTrainingMetrics:
     """Validation loss와 token/sequence accuracy를 계산한다."""
     if log_every_batches is not None and log_every_batches < 1:
         msg = "log_every_batches는 None이거나 1 이상이어야 합니다."
         raise ValueError(msg)
     model.eval()
-    total_loss = 0.0
+    total_loss: torch.Tensor | None = None
     total_examples = 0
     total_tokens = 0
     correct_tokens = 0
@@ -104,31 +128,38 @@ def evaluate_model(
 
     for batch_index, batch in enumerate(dataloader, start=1):
         batch = move_batch_to_device(batch, device)
-        logits = model(
-            batch.history_item_ids,
-            batch.history_padding_mask,
-            batch.decoder_input_ids,
-        )
-        loss = loss_fn(
-            logits.reshape(-1, logits.shape[-1]),
-            batch.target_token_ids.reshape(-1),
-        )
-        total_loss += float(loss.detach().cpu())
+        with torch.autocast(
+            device_type=device.type,
+            dtype=amp_dtype,
+            enabled=_use_autocast(device=device, use_amp=use_amp),
+        ):
+            logits = model(
+                batch.history_item_ids,
+                batch.history_padding_mask,
+                batch.decoder_input_ids,
+            )
+            loss = loss_fn(
+                logits.reshape(-1, logits.shape[-1]),
+                batch.target_token_ids.reshape(-1),
+            )
+        detached_loss = loss.detach()
+        total_loss = detached_loss if total_loss is None else total_loss + detached_loss
         total_examples += int(batch.target_token_ids.shape[0])
-        total_tokens += _num_target_tokens(batch.target_token_ids)
+        total_tokens += int(batch.target_token_ids.numel())
         correct_tokens += _num_correct_tokens(logits, batch.target_token_ids)
         correct_sequences += _num_correct_sequences(logits, batch.target_token_ids)
         if log_every_batches is not None and batch_index % log_every_batches == 0:
+            synced_total_loss = _loss_value(total_loss)
             print(
                 "eval "
                 f"batches={batch_index:,} "
                 f"examples={total_examples:,} "
-                f"loss={total_loss / max(total_tokens, 1):.6f}",
+                f"loss={synced_total_loss / max(total_tokens, 1):.6f}",
                 flush=True,
             )
 
     return _aggregate_metrics(
-        total_loss=total_loss,
+        total_loss=_loss_value(total_loss),
         total_examples=total_examples,
         total_tokens=total_tokens,
         correct_tokens=correct_tokens,
@@ -139,10 +170,10 @@ def evaluate_model(
 def move_batch_to_device(batch: GenerativeBatch, device: torch.device) -> GenerativeBatch:
     """Batch tensor를 device로 이동한다."""
     return GenerativeBatch(
-        history_item_ids=batch.history_item_ids.to(device),
-        history_padding_mask=batch.history_padding_mask.to(device),
-        decoder_input_ids=batch.decoder_input_ids.to(device),
-        target_token_ids=batch.target_token_ids.to(device),
+        history_item_ids=batch.history_item_ids.to(device, non_blocking=True),
+        history_padding_mask=batch.history_padding_mask.to(device, non_blocking=True),
+        decoder_input_ids=batch.decoder_input_ids.to(device, non_blocking=True),
+        target_token_ids=batch.target_token_ids.to(device, non_blocking=True),
     )
 
 
@@ -210,8 +241,14 @@ def _aggregate_metrics(
     )
 
 
-def _num_target_tokens(targets: torch.Tensor) -> int:
-    return int((targets != PAD_TOKEN_ID).sum().item())
+def _loss_value(loss: torch.Tensor | None) -> float:
+    if loss is None:
+        return 0.0
+    return float(loss.detach().cpu())
+
+
+def _use_autocast(*, device: torch.device, use_amp: bool) -> bool:
+    return use_amp and device.type in {"cpu", "cuda", "mps"}
 
 
 def _num_correct_tokens(logits: torch.Tensor, targets: torch.Tensor) -> int:

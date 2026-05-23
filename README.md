@@ -324,12 +324,37 @@ reports/ml_32m_semantic_id.md
 학습과 teacher-forcing 평가는 parquet를 메모리에 모두 올리지 않고
 `GenerativeParquetBatchIterableDataset`으로 batch 단위 streaming 처리합니다. 이 경로를 기본값으로
 고정했기 때문에 MovieLens 32M과 빠른 smoke test가 같은 데이터 로딩 방식을 사용합니다.
+대용량 학습도 기본값은 `GENERATIVE_NUM_WORKERS=0`입니다. 이 프로젝트의 Dataset은 이미
+parquet에서 tensor batch를 만들어 넘기기 때문에, macOS/MPS 환경에서는 멀티프로세스
+DataLoader가 대형 tensor batch를 프로세스 간 복사하면서 오히려 크게 느려질 수 있습니다.
+필요하면 `GENERATIVE_NUM_WORKERS`와 `GENERATIVE_PREFETCH_FACTOR`를 올려 비교할 수 있지만,
+기본 경로는 단일 프로세스 streaming입니다.
 
 학습:
 
 ```bash
 make train-generative
 ```
+
+장비 자원을 더 적극적으로 쓰는 예시:
+
+```bash
+GENERATIVE_DEVICE=mps \
+GENERATIVE_BATCH_SIZE=4096 \
+GENERATIVE_PARQUET_BATCH_SIZE=131072 \
+GENERATIVE_NUM_WORKERS=0 \
+make train-generative
+```
+
+로컬 ml-32m smoke benchmark에서는 같은 8,192개 train example 조건에서
+`GENERATIVE_NUM_WORKERS=0`이 약 `4.22s`, worker 4개가 약 `41.96s`였습니다.
+AMP(`GENERATIVE_AMP=1`)도 MPS에서는 같은 조건에서 유의미한 개선이 없어 기본값으로 켜지
+않습니다. CUDA 환경에서는 `GENERATIVE_AMP=1 GENERATIVE_AMP_DTYPE=float16`을 별도로
+벤치마크한 뒤 사용하는 편이 안전합니다.
+
+학습 속도를 우선할 때는 training loop에서 batch별 token/sequence accuracy를 계산하지 않고
+loss만 집계합니다. 학습 중 accuracy까지 보고 싶으면 `scripts/generative.py train`에
+`--full-train-metrics`를 추가하면 됩니다.
 
 평가:
 
