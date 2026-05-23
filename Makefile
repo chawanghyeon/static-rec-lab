@@ -187,6 +187,7 @@ eval-generative:
 		--parquet-batch-size $(GENERATIVE_PARQUET_BATCH_SIZE) \
 		--num-workers $(GENERATIVE_NUM_WORKERS) \
 		--prefetch-factor $(GENERATIVE_PREFETCH_FACTOR) \
+		--device $(GENERATIVE_DEVICE) \
 		$(GENERATIVE_AMP_CLI_ARG)
 
 eval-generative-ranking:
@@ -199,6 +200,7 @@ eval-generative-ranking:
 		--beam-size $(GENERATIVE_BEAM_SIZE) \
 		--inference-batch-size $(GENERATIVE_INFERENCE_BATCH_SIZE) \
 		--parquet-batch-size $(GENERATIVE_PARQUET_BATCH_SIZE) \
+		--device $(GENERATIVE_DEVICE) \
 		$(STATIC_DECODING_INDEX_CLI_ARG)
 
 benchmark-decoder:
