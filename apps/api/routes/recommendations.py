@@ -15,7 +15,12 @@ router = APIRouter(prefix="/recommendations", tags=["recommendations"])
 
 def get_recommendation_service(request: Request) -> RecommendationService:
     """FastAPI app state에서 recommendation service를 꺼낸다."""
-    return cast(RecommendationService, request.app.state.recommendation_service)
+    try:
+        service = request.app.state.recommendation_service
+    except AttributeError as exc:
+        msg = "recommendation service가 초기화되지 않았습니다."
+        raise RuntimeError(msg) from exc
+    return cast(RecommendationService, service)
 
 
 @router.get(

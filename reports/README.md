@@ -4,7 +4,7 @@
 
 리포트 목록:
 
-- [portfolio_summary.md](portfolio_summary.md): 포트폴리오 제출용 1페이지 요약
+- [project_summary.md](project_summary.md): 문제 정의, 구현 범위, 핵심 수치 요약
 - `ml_32m_validation.md`: MovieLens 32M 대용량 smoke/performance 검증
 - `ml_32m_baseline.md`: MovieLens 32M baseline 추천 성능
 - `ml_32m_semantic_id.md`: MovieLens 32M Semantic ID 생성 방식과 검증 결과

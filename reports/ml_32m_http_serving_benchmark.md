@@ -6,7 +6,7 @@ client-side JSON decode 비용을 포함합니다. 별도 network hop은 포함�
 
 ## 설정
 
-- 서비스 소스: `environment`
+- 서비스 소스: `model-backed`
 - endpoint: `/recommendations/users/{user_id}?k={k}`
 - model: `generative-retrieval-static`
 - decoder: `static_decoding_pt`

@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from apps.api.services.base import RecommendationService, RecommendedItem
-from apps.api.services.mock_recommender import MockRecommendationService
 from apps.api.services.model_recommender import (
     ModelRecommendationConfig,
     ModelRecommendationService,
@@ -14,57 +12,42 @@ from apps.api.services.model_recommender import (
 )
 
 __all__ = [
-    "MockRecommendationService",
+    "DEFAULT_MODEL_CONFIG",
     "ModelRecommendationConfig",
     "ModelRecommendationService",
     "RecommendationService",
     "RecommendedItem",
-    "build_recommendation_service_from_environment",
+    "build_default_recommendation_service",
     "load_user_histories",
 ]
 
 
-def build_recommendation_service_from_environment() -> RecommendationService:
-    """모델 환경변수가 모두 없을 때만 mock service를 사용한다."""
-    checkpoint_path = os.getenv("STATIC_REC_GENERATIVE_CHECKPOINT")
-    semantic_id_path = os.getenv("STATIC_REC_SEMANTIC_ID_PATH")
-    user_history_path = os.getenv("STATIC_REC_USER_HISTORY_PARQUET")
-    static_decoding_index_path = os.getenv("STATIC_REC_STATIC_DECODING_INDEX_PATH")
-    configured_values = {
-        "STATIC_REC_GENERATIVE_CHECKPOINT": checkpoint_path,
-        "STATIC_REC_SEMANTIC_ID_PATH": semantic_id_path,
-        "STATIC_REC_USER_HISTORY_PARQUET": user_history_path,
-    }
-    provided_values = {name: value for name, value in configured_values.items() if value}
-    if not provided_values:
-        return MockRecommendationService()
-    if len(provided_values) != len(configured_values):
-        missing_names = sorted(set(configured_values) - set(provided_values))
-        msg = f"model-backed API 설정에 필요한 환경변수가 빠졌습니다: {missing_names}"
-        raise ValueError(msg)
+DEFAULT_MODEL_CONFIG = ModelRecommendationConfig(
+    checkpoint_path=Path("artifacts/generative/ml-32m/model.pt"),
+    semantic_id_path=Path("artifacts/semantic_id/ml-32m/semantic_ids.json"),
+    user_history_path=Path("data/processed/ml-32m/valid.parquet"),
+    device="cpu",
+    beam_size=20,
+    static_decoding_index_path=Path("artifacts/semantic_id/ml-32m/static_decoding_index.npz"),
+)
 
-    paths = {name: Path(value) for name, value in provided_values.items() if value is not None}
-    missing_paths = {name: path for name, path in paths.items() if not path.exists()}
-    if static_decoding_index_path:
-        optional_static_decoding_index_path = Path(static_decoding_index_path)
-        if not optional_static_decoding_index_path.exists():
-            missing_paths["STATIC_REC_STATIC_DECODING_INDEX_PATH"] = (
-                optional_static_decoding_index_path
-            )
-    else:
-        optional_static_decoding_index_path = None
+
+def build_default_recommendation_service() -> RecommendationService:
+    """기본 artifact 기반 recommendation service를 생성한다."""
+    _validate_model_config_paths(DEFAULT_MODEL_CONFIG)
+    return ModelRecommendationService.from_config(DEFAULT_MODEL_CONFIG)
+
+
+def _validate_model_config_paths(config: ModelRecommendationConfig) -> None:
+    missing_paths = {
+        "checkpoint_path": config.checkpoint_path,
+        "semantic_id_path": config.semantic_id_path,
+        "user_history_path": config.user_history_path,
+    }
+    if config.static_decoding_index_path is not None:
+        missing_paths["static_decoding_index_path"] = config.static_decoding_index_path
+    missing_paths = {name: path for name, path in missing_paths.items() if not path.exists()}
     if missing_paths:
         formatted = {name: str(path) for name, path in missing_paths.items()}
-        msg = f"model-backed API 설정 파일을 찾을 수 없습니다: {formatted}"
+        msg = f"serving artifact를 찾을 수 없습니다: {formatted}"
         raise FileNotFoundError(msg)
-
-    return ModelRecommendationService.from_config(
-        ModelRecommendationConfig(
-            checkpoint_path=paths["STATIC_REC_GENERATIVE_CHECKPOINT"],
-            semantic_id_path=paths["STATIC_REC_SEMANTIC_ID_PATH"],
-            user_history_path=paths["STATIC_REC_USER_HISTORY_PARQUET"],
-            device=os.getenv("STATIC_REC_DEVICE", "cpu"),
-            beam_size=int(os.getenv("STATIC_REC_BEAM_SIZE", "50")),
-            static_decoding_index_path=optional_static_decoding_index_path,
-        )
-    )

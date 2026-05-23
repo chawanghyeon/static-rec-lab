@@ -53,7 +53,7 @@ artifacts/semantic_id/static_decoding_index.npz
 - `dense_states`
 
 `make eval-generative-ranking`은 위 artifact가 있으면 다시 빌드하지 않고 로드합니다. API도
-`STATIC_REC_STATIC_DECODING_INDEX_PATH`가 지정되면 같은 artifact를 사용합니다.
+기본 static_decoding artifact를 직접 로드합니다.
 
 ## 모델 inference에서의 적용 방식
 

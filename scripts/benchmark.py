@@ -5,15 +5,10 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from apps.api.routes import recommendations_router
-from apps.api.services import (
-    MockRecommendationService,
-    RecommendationService,
-    build_recommendation_service_from_environment,
-)
+from apps.api.main import create_app
+from apps.api.services import build_default_recommendation_service
 from recsys.benchmark import (
     DecoderBenchmarkConfig,
     ServingBenchmarkConfig,
@@ -85,12 +80,6 @@ def _add_decoder_parser(subparsers: argparse._SubParsersAction[argparse.Argument
 def _add_serving_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     parser = subparsers.add_parser("serving", help="serving benchmark")
     parser.add_argument(
-        "--service",
-        choices=["mock", "environment"],
-        default="mock",
-        help="benchmark 대상 service. environment는 STATIC_REC_* 환경변수 설정을 사용한다.",
-    )
-    parser.add_argument(
         "--report-path",
         type=Path,
         default=Path("reports/local/serving_benchmark.md"),
@@ -109,12 +98,6 @@ def _add_serving_http_parser(
     subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
 ) -> None:
     parser = subparsers.add_parser("serving-http", help="FastAPI HTTP endpoint benchmark")
-    parser.add_argument(
-        "--service",
-        choices=["mock", "environment"],
-        default="mock",
-        help="benchmark 대상 service. environment는 STATIC_REC_* 환경변수 설정을 사용한다.",
-    )
     parser.add_argument(
         "--report-path",
         type=Path,
@@ -199,11 +182,7 @@ def benchmark_decoder(args: argparse.Namespace) -> None:
 
 
 def benchmark_serving(args: argparse.Namespace) -> None:
-    service = (
-        MockRecommendationService()
-        if args.service == "mock"
-        else build_recommendation_service_from_environment()
-    )
+    service = build_default_recommendation_service()
     config = ServingBenchmarkConfig(
         batch_sizes=tuple(args.batch_sizes),
         warmup_iterations=args.warmup_iterations,
@@ -213,7 +192,7 @@ def benchmark_serving(args: argparse.Namespace) -> None:
         min_user_id=args.min_user_id,
         max_user_id=args.max_user_id,
     )
-    summary = run_serving_benchmark(service, config=config, source=args.service)
+    summary = run_serving_benchmark(service, config=config, source="model-backed")
     report_path = write_serving_benchmark_report(args.report_path, summary)
 
     print("Serving benchmark 완료")
@@ -231,13 +210,6 @@ def benchmark_serving(args: argparse.Namespace) -> None:
 
 
 def benchmark_serving_http(args: argparse.Namespace) -> None:
-    service = (
-        MockRecommendationService()
-        if args.service == "mock"
-        else build_recommendation_service_from_environment()
-    )
-    app = _create_benchmark_app(service)
-    client = TestClient(app)
     config = ServingBenchmarkConfig(
         batch_sizes=tuple(args.batch_sizes),
         warmup_iterations=args.warmup_iterations,
@@ -248,7 +220,8 @@ def benchmark_serving_http(args: argparse.Namespace) -> None:
         max_user_id=args.max_user_id,
         endpoint_template=args.endpoint_template,
     )
-    summary = run_http_endpoint_benchmark(client, config=config, source=args.service)
+    with TestClient(create_app()) as client:
+        summary = run_http_endpoint_benchmark(client, config=config, source="model-backed")
     report_path = write_http_endpoint_benchmark_report(args.report_path, summary)
 
     print("HTTP endpoint benchmark 완료")
@@ -264,17 +237,6 @@ def benchmark_serving_http(args: argparse.Namespace) -> None:
             f"throughput_req_s={result.throughput_requests_per_s:.2f}"
         )
     print(f"- report: {report_path}")
-
-
-def _create_benchmark_app(service: RecommendationService) -> FastAPI:
-    app = FastAPI(
-        title="static-rec-lab benchmark",
-        version="0.1.0",
-        description="static_decoding benchmark app",
-    )
-    app.state.recommendation_service = service
-    app.include_router(recommendations_router)
-    return app
 
 
 if __name__ == "__main__":

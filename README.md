@@ -23,14 +23,14 @@ benchmark, API serving까지 연결해 검증하는 것이 목표입니다.
 | Target | item_id가 아니라 고정 길이 Semantic ID token sequence |
 | Constraint | YouTube `static_decoding` sparse mask kernel |
 | Baseline | Popularity, item co-occurrence |
-| Serving | FastAPI mock service, checkpoint-backed service |
+| Serving | FastAPI checkpoint-backed service |
 | Validation | `make lint`, `make test`, decoder/API benchmark reports |
 
 ## 빠른 검토 가이드
 
 이 레포를 처음 볼 때는 아래 순서로 보면 됩니다.
 
-1. [포트폴리오 요약](reports/portfolio_summary.md): 문제 정의, 구현 범위, 핵심 수치, 해석을
+1. [프로젝트 요약](reports/project_summary.md): 문제 정의, 구현 범위, 핵심 수치, 해석을
    한 페이지로 정리했습니다.
 2. [static_decoding 통합 리포트](reports/static_decoding_integration.md): YouTube
    `static_decoding` package를 어떤 경로로 직접 호출하는지 정리했습니다.
@@ -65,16 +65,15 @@ make benchmark-decoder
 - decoder latency 및 throughput benchmark
 - FastAPI 기반 추천 endpoint
 - FastAPI HTTP endpoint benchmark
-- 실험 결과와 trade-off를 설명하는 포트폴리오 리포트
+- 실험 결과와 trade-off를 설명하는 프로젝트 리포트
 
 ## 현재 상태
 
 현재 레포지토리는 데이터셋 파이프라인, 평가 지표, baseline, Semantic ID codec,
 Semantic ID 생성, Generative Retrieval 학습/평가 코드, naive trie constrained decoder,
 `static_decoding` sparse transition decoder, decoder latency 및 throughput benchmark,
-constrained beam search, 학습 checkpoint 기반 API service와 mock service 경로까지 구현된
-상태입니다.
-최종 포트폴리오 수치는 MovieLens 32M 기준으로 생성했습니다. Latest Small은 빠른 개발과
+constrained beam search, 학습 checkpoint 기반 API service까지 구현된 상태입니다.
+최종 대표 수치는 MovieLens 32M 기준으로 생성했습니다. Latest Small은 빠른 개발과
 smoke test 용도로만 남기고, README의 대표 성능 수치는 `ml-32m` 결과를 사용합니다.
 
 전체 재현 명령:
@@ -118,7 +117,7 @@ Decoder benchmark:
 - 모든 sampled state batch에서 naive trie와 검증용 matrix decoder mask 일치를 확인했습니다.
 - `static_decoding.decoding_pt.generate_and_apply_logprobs_mask` 후보 추출과
   `static_decoding.decoding_pt.sparse_transition_torch` harness도 별도 benchmark에서 호출합니다.
-  harness의 dummy model도 `static_decoding.decoding_pt.RandomModel`을 사용하며,
+  harness는 `static_decoding.decoding_pt.RandomModel`을 사용하며,
   생성된 Semantic ID가 모두 유효한지 검증합니다.
 
 Serving benchmark:
@@ -138,7 +137,7 @@ Serving benchmark:
   Popularity와 item co-occurrence baseline보다 높은 Recall@20/NDCG@20을 기록했습니다.
 - constrained decoding 적용 후 invalid generation rate가 0으로 유지되어, 존재하지 않는
   item Semantic ID를 추천하지 않는다는 핵심 목표도 만족합니다.
-- portfolio 관점에서 핵심 비교 대상은 추천 정확도 1등이 아니라, baseline 추천 성능과
+- 검증 관점에서 핵심 비교 대상은 추천 정확도 1등이 아니라, baseline 추천 성능과
   constrained decoding latency/validity를 함께 제시하는 것입니다.
 
 ## 개발 환경
@@ -174,7 +173,7 @@ make format
 prefix-target pair로 변환합니다.
 
 실제 데이터는 Git에 커밋하지 않습니다. 기본 명령은 빠른 개발용 MovieLens Latest Small을
-받지만, 최종 포트폴리오 수치는 MovieLens 32M으로 생성했습니다.
+받지만, 최종 대표 수치는 MovieLens 32M으로 생성했습니다.
 
 다운로드:
 
@@ -409,9 +408,9 @@ make generative-ml32m
 ```
 
 현재 모델 구현은 학습/평가 루프, checkpoint format, `static_decoding` 기반 constrained
-beam search inference까지 제공합니다. API는 checkpoint, Semantic ID, user history parquet 경로가 모두
-환경변수로 주어지면 model-backed service를 사용합니다. 세 환경변수가 모두 없을 때만
-deterministic mock service를 사용하고, 일부만 설정되었거나 파일이 없으면 명시적으로 실패합니다.
+beam search inference까지 제공합니다. API는 기본 checkpoint, Semantic ID,
+user history parquet, static_decoding index artifact를 고정 경로에서 로드합니다. artifact가
+없으면 명시적으로 실패합니다.
 
 `make eval-generative`는 teacher-forcing 기준의 validation loss, token accuracy,
 sequence accuracy를 측정합니다. `make eval-generative-ranking`은 실제 constrained beam
@@ -480,28 +479,7 @@ make benchmark-serving
 make benchmark-api
 ```
 
-model-backed service를 측정하려면 API 실행과 같은 `STATIC_REC_*` 환경변수를 설정하고
-`SERVING_BENCHMARK_SERVICE=environment`로 실행합니다.
-
-```bash
-STATIC_REC_GENERATIVE_CHECKPOINT=artifacts/generative/model.pt \
-STATIC_REC_SEMANTIC_ID_PATH=artifacts/semantic_id/semantic_ids.json \
-STATIC_REC_STATIC_DECODING_INDEX_PATH=artifacts/semantic_id/static_decoding_index.npz \
-STATIC_REC_USER_HISTORY_PARQUET=data/processed/valid.parquet \
-SERVING_BENCHMARK_SERVICE=environment \
-make benchmark-serving
-```
-
-HTTP endpoint benchmark도 같은 환경변수를 사용합니다.
-
-```bash
-STATIC_REC_GENERATIVE_CHECKPOINT=artifacts/generative/model.pt \
-STATIC_REC_SEMANTIC_ID_PATH=artifacts/semantic_id/semantic_ids.json \
-STATIC_REC_STATIC_DECODING_INDEX_PATH=artifacts/semantic_id/static_decoding_index.npz \
-STATIC_REC_USER_HISTORY_PARQUET=data/processed/valid.parquet \
-SERVING_BENCHMARK_SERVICE=environment \
-make benchmark-api
-```
+serving benchmark는 기본 artifact 경로를 고정 사용합니다.
 
 MovieLens 32M checkpoint 기준:
 
@@ -518,9 +496,8 @@ reports/ml_32m_http_serving_benchmark.md
 
 ## Recommendation API
 
-학습된 generative retrieval model이 준비되기 전에는 deterministic mock recommender로 serving
-contract를 검증합니다. 아래 환경변수를 모두 설정하면 checkpoint 기반 generative retrieval
-service가 대신 사용됩니다.
+Recommendation API는 checkpoint 기반 generative retrieval service로만 동작합니다.
+API는 기본 artifact 경로를 고정 사용합니다.
 
 실행:
 
@@ -528,19 +505,17 @@ service가 대신 사용됩니다.
 make serve-api
 ```
 
-Model-backed 실행 환경변수:
+사용되는 artifact:
 
-```bash
-STATIC_REC_GENERATIVE_CHECKPOINT=artifacts/generative/model.pt \
-STATIC_REC_SEMANTIC_ID_PATH=artifacts/semantic_id/semantic_ids.json \
-STATIC_REC_STATIC_DECODING_INDEX_PATH=artifacts/semantic_id/static_decoding_index.npz \
-STATIC_REC_USER_HISTORY_PARQUET=data/processed/valid.parquet \
-make serve-api
+```text
+artifacts/generative/ml-32m/model.pt
+artifacts/semantic_id/ml-32m/semantic_ids.json
+artifacts/semantic_id/ml-32m/static_decoding_index.npz
+data/processed/ml-32m/valid.parquet
 ```
 
 API serving은 `static_decoding` 기반 STATIC decoder를 사용합니다.
-`STATIC_REC_STATIC_DECODING_INDEX_PATH`는 선택값이지만, 지정하면 static_decoding
-`build_static_index` 산출물 `.npz`를 직접 로드합니다.
+static_decoding `build_static_index` 산출물 `.npz`를 직접 로드합니다.
 
 Endpoint:
 
@@ -581,14 +556,14 @@ user history
 
 FastAPI
   -> RecommendationService
-  -> Mock service or model-backed service
+  -> model-backed service
   -> /recommendations/users/{user_id}?k=20
 ```
 
 모델 코드는 `recsys.models`, constrained decoding은 `recsys.decoding`, 추천 평가와 benchmark는
 `recsys.evaluation` 및 `recsys.benchmark`, API는 `apps.api`에 분리했습니다. API는 service
-interface를 통해 mock service와 model-backed service를 교체할 수 있으므로, 학습 checkpoint가
-없어도 endpoint contract를 테스트할 수 있습니다.
+interface를 유지하지만 런타임에서는 checkpoint, Semantic ID codec, static_decoding index,
+user history parquet로 구성된 model-backed service를 사용합니다.
 
 ## 설계 결정과 Trade-off
 
@@ -612,7 +587,7 @@ Generative model:
 
 - 현재 모델은 작은 Transformer encoder-decoder를 1 epoch 학습한 baseline입니다.
 - `ml-32m` 최종 평가에서는 Popularity와 item co-occurrence baseline보다 높은 ranking 성능을
-  기록했습니다. 다만 모델 크기와 학습 epoch는 아직 포트폴리오 검증용 baseline 수준입니다.
+  기록했습니다. 다만 모델 크기와 학습 epoch는 아직 초기 검증용 baseline 수준입니다.
 - constrained decoding 적용 후 invalid generation rate가 0으로 유지됩니다.
 - 이 프로젝트의 핵심은 SOTA 추천 정확도가 아니라, generative retrieval에서 존재하지 않는 item
   sequence 생성을 막고 그 latency/validity를 측정하는 것입니다.
@@ -693,7 +668,7 @@ static-rec-lab/
 5. Generative Retrieval 모델
 6. constrained decoding
 7. Recommendation API
-8. 포트폴리오 리포트
+8. 프로젝트 리포트
 
 ## 구현 원칙
 

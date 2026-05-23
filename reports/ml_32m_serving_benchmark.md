@@ -6,7 +6,7 @@ FastAPI 직렬화, validation, network overhead를 제외한 모델 및 decoder 
 
 ## 설정
 
-- 서비스 소스: `environment`
+- 서비스 소스: `model-backed`
 - model: `generative-retrieval-static`
 - decoder: `static_decoding_pt`
 - device: `cpu`

@@ -67,7 +67,6 @@ endif
 SERVING_BENCHMARK_REPORT ?= reports/local/serving_benchmark.md
 HTTP_SERVING_BENCHMARK_REPORT ?= reports/local/http_serving_benchmark.md
 SERVING_BENCHMARK_BATCH_SIZES ?= 1 32 128
-SERVING_BENCHMARK_SERVICE ?= mock
 MIN_INTERACTIONS ?= 5
 MAX_HISTORY_LENGTH ?= 50
 
@@ -94,7 +93,6 @@ ML32M_GENERATIVE_PREFETCH_FACTOR ?= 4
 ML32M_GENERATIVE_AMP ?= 0
 ML32M_GENERATIVE_AMP_DTYPE ?= float16
 ML32M_DEVICE ?= auto
-ML32M_SERVING_DEVICE ?= cpu
 
 .PHONY: format lint test download-movielens preprocess train-baseline eval-baseline build-semantic-ids validate-semantic-ids build-static-decoding-index train-generative eval-generative eval-generative-ranking benchmark-decoder benchmark-serving benchmark-api serve-api check download-ml32m preprocess-ml32m baseline-ml32m semantic-ids-ml32m generative-ml32m benchmark-ml32m reproduce-ml32m
 
@@ -210,13 +208,11 @@ benchmark-decoder:
 
 benchmark-serving:
 	$(UV) run python scripts/benchmark.py serving \
-		--service $(SERVING_BENCHMARK_SERVICE) \
 		--report-path $(SERVING_BENCHMARK_REPORT) \
 		--batch-sizes $(SERVING_BENCHMARK_BATCH_SIZES)
 
 benchmark-api:
 	$(UV) run python scripts/benchmark.py serving-http \
-		--service $(SERVING_BENCHMARK_SERVICE) \
 		--report-path $(HTTP_SERVING_BENCHMARK_REPORT) \
 		--batch-sizes $(SERVING_BENCHMARK_BATCH_SIZES)
 
@@ -286,21 +282,9 @@ benchmark-ml32m:
 	$(MAKE) benchmark-decoder \
 		DECODER_BENCHMARK_SEMANTIC_ID_PATH=$(ML32M_SEMANTIC_ID_PATH) \
 		DECODER_BENCHMARK_REPORT=$(ML32M_DECODER_BENCHMARK_REPORT)
-	STATIC_REC_GENERATIVE_CHECKPOINT=$(ML32M_GENERATIVE_CHECKPOINT) \
-	STATIC_REC_SEMANTIC_ID_PATH=$(ML32M_SEMANTIC_ID_PATH) \
-	STATIC_REC_STATIC_DECODING_INDEX_PATH=$(ML32M_STATIC_DECODING_INDEX_PATH) \
-	STATIC_REC_USER_HISTORY_PARQUET=$(ML32M_PROCESSED_DIR)/valid.parquet \
-	STATIC_REC_DEVICE=$(ML32M_SERVING_DEVICE) \
 	$(MAKE) benchmark-serving \
-		SERVING_BENCHMARK_SERVICE=environment \
 		SERVING_BENCHMARK_REPORT=$(ML32M_SERVING_BENCHMARK_REPORT)
-	STATIC_REC_GENERATIVE_CHECKPOINT=$(ML32M_GENERATIVE_CHECKPOINT) \
-	STATIC_REC_SEMANTIC_ID_PATH=$(ML32M_SEMANTIC_ID_PATH) \
-	STATIC_REC_STATIC_DECODING_INDEX_PATH=$(ML32M_STATIC_DECODING_INDEX_PATH) \
-	STATIC_REC_USER_HISTORY_PARQUET=$(ML32M_PROCESSED_DIR)/valid.parquet \
-	STATIC_REC_DEVICE=$(ML32M_SERVING_DEVICE) \
 	$(MAKE) benchmark-api \
-		SERVING_BENCHMARK_SERVICE=environment \
 		HTTP_SERVING_BENCHMARK_REPORT=$(ML32M_HTTP_SERVING_BENCHMARK_REPORT)
 
 reproduce-ml32m: preprocess-ml32m baseline-ml32m semantic-ids-ml32m generative-ml32m benchmark-ml32m
