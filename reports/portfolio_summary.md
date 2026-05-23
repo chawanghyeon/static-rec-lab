@@ -25,6 +25,7 @@ Generative Retrieval 추천 시스템입니다.
 - interaction embedding 기반 Semantic ID 생성
 - hierarchical balanced k-means 기반 item tokenization
 - PyTorch Transformer 기반 Generative Retrieval 모델
+- parquet batch streaming 기반 Generative Retrieval 학습/평가
 - YouTube `static_decoding` package 기반 constrained beam search
 - naive trie 및 검증용 matrix decoder와의 mask 일치 검증
 - decoder latency, throughput, generated sequence validity benchmark

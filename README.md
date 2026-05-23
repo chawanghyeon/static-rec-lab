@@ -321,6 +321,10 @@ reports/ml_32m_semantic_id.md
 생성하는 Transformer encoder-decoder 모델을 제공합니다. 학습은 teacher forcing으로 진행하며,
 평가는 validation loss, token accuracy, sequence accuracy를 기록합니다.
 
+학습과 teacher-forcing 평가는 parquet를 메모리에 모두 올리지 않고
+`GenerativeParquetBatchIterableDataset`으로 batch 단위 streaming 처리합니다. 이 경로를 기본값으로
+고정했기 때문에 MovieLens 32M과 빠른 smoke test가 같은 데이터 로딩 방식을 사용합니다.
+
 학습:
 
 ```bash
@@ -374,7 +378,7 @@ deterministic mock service를 사용하고, 일부만 설정되었거나 파일�
 `make eval-generative`는 teacher-forcing 기준의 validation loss, token accuracy,
 sequence accuracy를 측정합니다. `make eval-generative-ranking`은 실제 constrained beam
 search로 추천 item ranking을 만든 뒤 baseline과 같은 Recall@K, NDCG@K, MRR@K 및 invalid
-generation rate를 측정합니다.
+generation rate를 측정합니다. ranking 평가도 valid/test parquet를 batch 단위로 읽어 처리합니다.
 
 ## Constrained Decoding
 
