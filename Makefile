@@ -27,6 +27,8 @@ GENERATIVE_CHECKPOINT ?= artifacts/generative/model.pt
 GENERATIVE_REPORT ?= reports/local/generative.md
 GENERATIVE_RANKING_REPORT ?= reports/local/generative_eval.md
 GENERATIVE_EPOCHS ?= 1
+GENERATIVE_EVAL_EVERY_EPOCHS ?= 1
+GENERATIVE_SKIP_VALID_ACCURACY ?= 0
 GENERATIVE_BATCH_SIZE ?= 64
 GENERATIVE_LR ?= 0.001
 GENERATIVE_BEAM_SIZE ?= 50
@@ -48,6 +50,11 @@ ifneq ($(filter 1 true yes,$(GENERATIVE_AMP)),)
 GENERATIVE_AMP_CLI_ARG := --amp --amp-dtype $(GENERATIVE_AMP_DTYPE)
 else
 GENERATIVE_AMP_CLI_ARG :=
+endif
+ifneq ($(filter 1 true yes,$(GENERATIVE_SKIP_VALID_ACCURACY)),)
+GENERATIVE_SKIP_VALID_ACCURACY_CLI_ARG := --skip-valid-accuracy
+else
+GENERATIVE_SKIP_VALID_ACCURACY_CLI_ARG :=
 endif
 DECODER_BENCHMARK_REPORT ?= reports/local/decoder_benchmark.md
 DECODER_BENCHMARK_BATCH_SIZES ?= 1 32 128 512
@@ -157,6 +164,7 @@ train-generative:
 		--semantic-id-path $(SEMANTIC_ID_PATH) \
 		--output-path $(GENERATIVE_CHECKPOINT) \
 		--epochs $(GENERATIVE_EPOCHS) \
+		--eval-every-epochs $(GENERATIVE_EVAL_EVERY_EPOCHS) \
 		--batch-size $(GENERATIVE_BATCH_SIZE) \
 		--learning-rate $(GENERATIVE_LR) \
 		--max-history-length $(MAX_HISTORY_LENGTH) \
@@ -166,7 +174,8 @@ train-generative:
 		--prefetch-factor $(GENERATIVE_PREFETCH_FACTOR) \
 		--log-every-batches $(GENERATIVE_LOG_EVERY_BATCHES) \
 		$(GENERATIVE_COMPILE_MODEL_CLI_ARG) \
-		$(GENERATIVE_AMP_CLI_ARG)
+		$(GENERATIVE_AMP_CLI_ARG) \
+		$(GENERATIVE_SKIP_VALID_ACCURACY_CLI_ARG)
 
 eval-generative:
 	$(UV) run python scripts/generative.py eval \

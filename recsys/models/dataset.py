@@ -43,6 +43,7 @@ class GenerativeParquetBatchIterableDataset(IterableDataset[GenerativeBatch]):
         batch_size: int,
         max_examples: int | None = None,
         parquet_batch_size: int = 65_536,
+        fixed_history_length: int | None = None,
     ) -> None:
         if batch_size < 1:
             msg = "batch_size는 1 이상이어야 합니다."
@@ -53,6 +54,9 @@ class GenerativeParquetBatchIterableDataset(IterableDataset[GenerativeBatch]):
         if parquet_batch_size < 1:
             msg = "parquet_batch_size는 1 이상이어야 합니다."
             raise ValueError(msg)
+        if fixed_history_length is not None and fixed_history_length < 1:
+            msg = "fixed_history_length는 None이거나 1 이상이어야 합니다."
+            raise ValueError(msg)
 
         self._path = Path(path)
         self._item_index_lookup = _build_item_index_lookup(item_to_index)
@@ -60,6 +64,7 @@ class GenerativeParquetBatchIterableDataset(IterableDataset[GenerativeBatch]):
         self._batch_size = batch_size
         self._max_examples = max_examples
         self._parquet_batch_size = parquet_batch_size
+        self._fixed_history_length = fixed_history_length
 
     def __iter__(self) -> Iterator[GenerativeBatch]:
         worker_info = get_worker_info()
@@ -98,6 +103,7 @@ class GenerativeParquetBatchIterableDataset(IterableDataset[GenerativeBatch]):
                     record_batch,
                     item_index_lookup=self._item_index_lookup,
                     target_token_lookup=self._target_token_lookup,
+                    fixed_history_length=self._fixed_history_length,
                 )
             )
             if target_token_ids.shape[0] == 0:
@@ -199,6 +205,7 @@ def _record_batch_to_generative_arrays(
     *,
     item_index_lookup: np.ndarray,
     target_token_lookup: np.ndarray,
+    fixed_history_length: int | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     history_column = record_batch.column("history_item_ids")
     target_item_ids = np.asarray(
@@ -215,7 +222,16 @@ def _record_batch_to_generative_arrays(
     offsets = np.asarray(history_column.offsets.to_numpy(zero_copy_only=False), dtype=np.int64)
     values = np.asarray(history_column.values.to_numpy(zero_copy_only=False), dtype=np.int64)
     lengths = offsets[1:] - offsets[:-1]
-    max_history_length = max(int(lengths.max(initial=0)), 1)
+    max_observed_length = int(lengths.max(initial=0))
+    max_history_length = (
+        max(max_observed_length, 1) if fixed_history_length is None else fixed_history_length
+    )
+    if max_observed_length > max_history_length:
+        msg = (
+            "record batch history length가 fixed_history_length를 초과했습니다: "
+            f"{max_observed_length} > {max_history_length}"
+        )
+        raise ValueError(msg)
     history_item_ids = np.full((num_rows, max_history_length), PAD_ITEM_INDEX, dtype=np.int64)
     history_padding_mask = np.ones((num_rows, max_history_length), dtype=bool)
 

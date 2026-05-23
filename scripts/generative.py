@@ -69,6 +69,19 @@ def _add_train_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
         default=Path("artifacts/generative/model.pt"),
     )
     parser.add_argument("--epochs", type=int, default=1)
+    parser.add_argument(
+        "--eval-every-epochs",
+        type=int,
+        default=1,
+        help="N epoch마다 validation을 실행합니다. 0이면 마지막 epoch 뒤에 한 번만 평가합니다.",
+    )
+    parser.add_argument(
+        "--skip-valid-accuracy",
+        action="store_true",
+        help=(
+            "학습 중 validation에서는 loss만 계산합니다. 최종 accuracy는 eval command로 계산합니다."
+        ),
+    )
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--learning-rate", type=float, default=1e-3)
     parser.add_argument("--max-train-examples", type=int, default=None)
@@ -196,6 +209,8 @@ def _add_eval_ranking_parser(
 def train_generative(args: argparse.Namespace) -> None:
     if args.epochs < 1:
         raise ValueError("epochs는 1 이상이어야 합니다.")
+    if args.eval_every_epochs < 0:
+        raise ValueError("eval-every-epochs는 0 이상이어야 합니다.")
     if args.batch_size < 1:
         raise ValueError("batch-size는 1 이상이어야 합니다.")
     _validate_loader_options(args.num_workers, args.prefetch_factor)
@@ -213,6 +228,7 @@ def train_generative(args: argparse.Namespace) -> None:
         batch_size=args.batch_size,
         max_examples=args.max_train_examples,
         parquet_batch_size=args.parquet_batch_size,
+        fixed_history_length=args.max_history_length,
     )
     valid_dataset = GenerativeParquetBatchIterableDataset(
         args.valid_parquet,
@@ -221,6 +237,7 @@ def train_generative(args: argparse.Namespace) -> None:
         batch_size=args.batch_size,
         max_examples=args.max_valid_examples,
         parquet_batch_size=args.parquet_batch_size,
+        fixed_history_length=args.max_history_length,
     )
     train_loader = _batch_stream(
         train_dataset,
@@ -270,21 +287,28 @@ def train_generative(args: argparse.Namespace) -> None:
             use_amp=args.amp,
             amp_dtype=amp_dtype,
         )
-        valid_metrics = evaluate_model(
-            train_model,
-            valid_loader,
-            device=device,
-            log_every_batches=args.log_every_batches,
-            use_amp=args.amp,
-            amp_dtype=amp_dtype,
+        should_eval = _should_evaluate_epoch(
+            epoch=epoch,
+            epochs=args.epochs,
+            eval_every_epochs=args.eval_every_epochs,
         )
-        print(
-            f"epoch={epoch} "
-            f"train_loss={train_metrics.loss:.6f} "
-            f"valid_loss={valid_metrics.loss:.6f} "
-            f"valid_token_acc={valid_metrics.token_accuracy:.6f} "
-            f"valid_sequence_acc={valid_metrics.sequence_accuracy:.6f}"
-        )
+        if should_eval:
+            valid_metrics = evaluate_model(
+                train_model,
+                valid_loader,
+                device=device,
+                log_every_batches=args.log_every_batches,
+                use_amp=args.amp,
+                amp_dtype=amp_dtype,
+                compute_accuracy=not args.skip_valid_accuracy,
+            )
+            valid_summary = _format_validation_summary(
+                valid_metrics,
+                include_accuracy=not args.skip_valid_accuracy,
+            )
+        else:
+            valid_summary = "valid=skipped"
+        print(f"epoch={epoch} train_loss={train_metrics.loss:.6f} {valid_summary}")
 
     if valid_metrics is None:
         raise RuntimeError("학습 metric이 생성되지 않았습니다.")
@@ -319,6 +343,7 @@ def eval_generative(args: argparse.Namespace) -> None:
         batch_size=args.batch_size,
         max_examples=args.max_examples,
         parquet_batch_size=args.parquet_batch_size,
+        fixed_history_length=model.config.max_history_length,
     )
     dataloader = _batch_stream(
         dataset,
@@ -442,6 +467,20 @@ def _print_evaluation(evaluation: GenerativeRankingEvaluation) -> None:
     )
 
 
+def _format_validation_summary(
+    metrics: GenerativeTrainingMetrics,
+    *,
+    include_accuracy: bool,
+) -> str:
+    if not include_accuracy:
+        return f"valid_loss={metrics.loss:.6f} valid_accuracy=skipped"
+    return (
+        f"valid_loss={metrics.loss:.6f} "
+        f"valid_token_acc={metrics.token_accuracy:.6f} "
+        f"valid_sequence_acc={metrics.sequence_accuracy:.6f}"
+    )
+
+
 def _batch_stream(
     dataset: GenerativeParquetBatchIterableDataset,
     *,
@@ -484,6 +523,14 @@ def _resolve_amp_dtype(name: str) -> torch.dtype:
     if name == "bfloat16":
         return torch.bfloat16
     raise ValueError(f"지원하지 않는 amp dtype입니다: {name}")
+
+
+def _should_evaluate_epoch(*, epoch: int, epochs: int, eval_every_epochs: int) -> bool:
+    if epoch == epochs:
+        return True
+    if eval_every_epochs == 0:
+        return False
+    return epoch % eval_every_epochs == 0
 
 
 if __name__ == "__main__":

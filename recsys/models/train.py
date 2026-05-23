@@ -43,8 +43,8 @@ def train_one_epoch(
     total_loss: torch.Tensor | None = None
     total_examples = 0
     total_tokens = 0
-    correct_tokens = 0
-    correct_sequences = 0
+    correct_tokens: torch.Tensor | int = 0
+    correct_sequences: torch.Tensor | int = 0
     loss_fn = nn.CrossEntropyLoss(ignore_index=PAD_TOKEN_ID, reduction="sum")
     amp_module = cast(Any, torch.amp)
     scaler = amp_module.GradScaler(
@@ -83,8 +83,14 @@ def train_one_epoch(
         total_tokens += int(batch.target_token_ids.numel())
         if compute_accuracy:
             detached_logits = logits.detach()
-            correct_tokens += _num_correct_tokens(detached_logits, batch.target_token_ids)
-            correct_sequences += _num_correct_sequences(detached_logits, batch.target_token_ids)
+            correct_tokens = _add_count(
+                correct_tokens,
+                _num_correct_tokens(detached_logits, batch.target_token_ids),
+            )
+            correct_sequences = _add_count(
+                correct_sequences,
+                _num_correct_sequences(detached_logits, batch.target_token_ids),
+            )
         if log_every_batches is not None and batch_index % log_every_batches == 0:
             synced_total_loss = _loss_value(total_loss)
             print(
@@ -104,7 +110,7 @@ def train_one_epoch(
     )
 
 
-@torch.no_grad()
+@torch.inference_mode()
 def evaluate_model(
     model: nn.Module,
     dataloader: Iterable[GenerativeBatch],
@@ -113,6 +119,7 @@ def evaluate_model(
     log_every_batches: int | None = None,
     use_amp: bool = False,
     amp_dtype: torch.dtype = torch.float16,
+    compute_accuracy: bool = True,
 ) -> GenerativeTrainingMetrics:
     """Validation loss와 token/sequence accuracy를 계산한다."""
     if log_every_batches is not None and log_every_batches < 1:
@@ -122,8 +129,8 @@ def evaluate_model(
     total_loss: torch.Tensor | None = None
     total_examples = 0
     total_tokens = 0
-    correct_tokens = 0
-    correct_sequences = 0
+    correct_tokens: torch.Tensor | int = 0
+    correct_sequences: torch.Tensor | int = 0
     loss_fn = nn.CrossEntropyLoss(ignore_index=PAD_TOKEN_ID, reduction="sum")
 
     for batch_index, batch in enumerate(dataloader, start=1):
@@ -146,8 +153,15 @@ def evaluate_model(
         total_loss = detached_loss if total_loss is None else total_loss + detached_loss
         total_examples += int(batch.target_token_ids.shape[0])
         total_tokens += int(batch.target_token_ids.numel())
-        correct_tokens += _num_correct_tokens(logits, batch.target_token_ids)
-        correct_sequences += _num_correct_sequences(logits, batch.target_token_ids)
+        if compute_accuracy:
+            correct_tokens = _add_count(
+                correct_tokens,
+                _num_correct_tokens(logits, batch.target_token_ids),
+            )
+            correct_sequences = _add_count(
+                correct_sequences,
+                _num_correct_sequences(logits, batch.target_token_ids),
+            )
         if log_every_batches is not None and batch_index % log_every_batches == 0:
             synced_total_loss = _loss_value(total_loss)
             print(
@@ -227,16 +241,18 @@ def _aggregate_metrics(
     total_loss: float,
     total_examples: int,
     total_tokens: int,
-    correct_tokens: int,
-    correct_sequences: int,
+    correct_tokens: torch.Tensor | int,
+    correct_sequences: torch.Tensor | int,
 ) -> GenerativeTrainingMetrics:
     if total_examples < 1:
         msg = "metric을 계산할 example이 없습니다."
         raise ValueError(msg)
+    correct_token_count = _count_value(correct_tokens)
+    correct_sequence_count = _count_value(correct_sequences)
     return GenerativeTrainingMetrics(
         loss=total_loss / max(total_tokens, 1),
-        token_accuracy=correct_tokens / max(total_tokens, 1),
-        sequence_accuracy=correct_sequences / total_examples,
+        token_accuracy=correct_token_count / max(total_tokens, 1),
+        sequence_accuracy=correct_sequence_count / total_examples,
         num_examples=total_examples,
     )
 
@@ -247,18 +263,30 @@ def _loss_value(loss: torch.Tensor | None) -> float:
     return float(loss.detach().cpu())
 
 
+def _count_value(count: torch.Tensor | int) -> int:
+    if isinstance(count, int):
+        return count
+    return int(count.detach().cpu())
+
+
+def _add_count(total: torch.Tensor | int, count: torch.Tensor) -> torch.Tensor:
+    if isinstance(total, int):
+        return count
+    return total + count
+
+
 def _use_autocast(*, device: torch.device, use_amp: bool) -> bool:
     return use_amp and device.type in {"cpu", "cuda", "mps"}
 
 
-def _num_correct_tokens(logits: torch.Tensor, targets: torch.Tensor) -> int:
+def _num_correct_tokens(logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
     predictions = logits.argmax(dim=-1)
     mask = targets != PAD_TOKEN_ID
-    return int(((predictions == targets) & mask).sum().item())
+    return ((predictions == targets) & mask).sum()
 
 
-def _num_correct_sequences(logits: torch.Tensor, targets: torch.Tensor) -> int:
+def _num_correct_sequences(logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
     predictions = logits.argmax(dim=-1)
     mask = targets != PAD_TOKEN_ID
     per_token_match = (predictions == targets) | ~mask
-    return int(per_token_match.all(dim=1).sum().item())
+    return per_token_match.all(dim=1).sum()

@@ -176,6 +176,6 @@ def _validate_config(config: GenerativeRetrieverConfig) -> None:
 
 def _causal_mask(sequence_length: int) -> torch.Tensor:
     return torch.triu(
-        torch.full((sequence_length, sequence_length), float("-inf")),
+        torch.ones((sequence_length, sequence_length), dtype=torch.bool),
         diagonal=1,
     )

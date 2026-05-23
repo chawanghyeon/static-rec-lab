@@ -59,6 +59,20 @@ def test_generative_parquet_batch_iterable_dataset_respects_max_examples(
     assert batch.target_token_ids.shape[0] == 2
 
 
+def test_generative_parquet_batch_iterable_dataset_supports_fixed_history_length(
+    tmp_path: Path,
+) -> None:
+    codec = _sample_codec()
+    dataset = _sample_dataset(tmp_path, codec, batch_size=2, fixed_history_length=4)
+
+    batch = next(iter(dataset))
+
+    assert batch.history_item_ids.shape == (2, 4)
+    assert batch.history_padding_mask.shape == (2, 4)
+    assert batch.history_padding_mask[0].tolist() == [False, True, True, True]
+    assert batch.history_padding_mask[1].tolist() == [False, False, True, True]
+
+
 def test_generative_retriever_forward_shape(tmp_path: Path) -> None:
     codec = _sample_codec()
     batch = next(iter(_sample_dataset(tmp_path, codec, batch_size=2)))
@@ -177,6 +191,7 @@ def _sample_dataset(
     batch_size: int,
     max_examples: int | None = None,
     parquet_batch_size: int = 2,
+    fixed_history_length: int | None = None,
 ) -> GenerativeParquetBatchIterableDataset:
     return GenerativeParquetBatchIterableDataset(
         _write_sample_parquet(tmp_path),
@@ -185,6 +200,7 @@ def _sample_dataset(
         batch_size=batch_size,
         max_examples=max_examples,
         parquet_batch_size=parquet_batch_size,
+        fixed_history_length=fixed_history_length,
     )
 
 
