@@ -1,4 +1,4 @@
-"""DuckDB 기반 item KNN 대용량 학습."""
+"""DuckDB 기반 item KNN parquet 학습 backend."""
 
 from __future__ import annotations
 

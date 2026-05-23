@@ -11,7 +11,7 @@ from typing import Any, Final
 
 import pandas as pd
 
-from recsys.baseline.item_knn_duckdb import (
+from recsys.baseline.item_knn_duckdb_trainer import (
     fit_item_knn_model_from_parquet as _fit_item_knn_model_from_parquet,
 )
 from recsys.baseline.item_knn_model import CooccurrenceCandidate, ItemKNNModel
