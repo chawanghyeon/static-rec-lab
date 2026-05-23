@@ -1,20 +1,30 @@
 # static-rec-lab
 
-`static-rec-lab`는 YouTube `static-constraint-decoding`의 `static_decoding` 패키지를
-추천 시스템 맥락에 적용하고 검증하기 위한 실험용 레포지토리입니다.
-
-목표는 단순 추천 API를 만드는 것이 아니라, 사용자 행동 이력을 기반으로 Transformer가
-추천 item의 Semantic ID를 생성하고, 존재하는 item에 해당하는 token sequence만 생성되도록
-decoding을 제약하는 전체 흐름을 구현하는 것입니다.
+`static-rec-lab`는 Generative Retrieval 추천 시스템에 YouTube `static_decoding` package를
+적용해, 존재하는 item에 해당하는 Semantic ID sequence만 생성하도록 제약하는 실험용
+레포지토리입니다.
 
 ## 핵심 메시지
 
 > 추천 시스템을 단순 API로 만든 것이 아니라, Generative Retrieval,
 > Constrained Decoding, Benchmark, Serving까지 구현한다.
 
-이 프로젝트는 추천 정확도 1등을 목표로 하지 않습니다. 핵심은 Generative Retrieval에서
-유효한 item sequence만 생성하도록 제약하는 decoder를 적용하고, naive trie 방식과
-`static_decoding` sparse transition 방식의 정확성 및 지연시간 차이를 실험으로 보여주는 것입니다.
+사용자 행동 이력을 Transformer에 넣어 추천 item의 Semantic ID token sequence를 생성하고,
+decoding 단계에서 유효하지 않은 sequence를 차단합니다. 추천 정확도 1등이 목표가 아니라,
+Generative Retrieval에서 constrained decoding을 실제 데이터 파이프라인, 모델 학습, 평가,
+benchmark, API serving까지 연결해 검증하는 것이 목표입니다.
+
+## 한눈에 보기
+
+| 항목 | 내용 |
+| --- | --- |
+| Dataset | MovieLens Latest Small, MovieLens 32M |
+| Model | PyTorch Transformer encoder-decoder |
+| Target | item_id가 아니라 고정 길이 Semantic ID token sequence |
+| Constraint | YouTube `static_decoding` sparse mask kernel |
+| Baseline | Popularity, item co-occurrence |
+| Serving | FastAPI mock service, checkpoint-backed service |
+| Validation | `make lint`, `make test`, decoder/API benchmark reports |
 
 ## 빠른 검토 가이드
 
@@ -35,12 +45,11 @@ decoding을 제약하는 전체 흐름을 구현하는 것입니다.
 7. [ml-32m HTTP endpoint benchmark](reports/ml_32m_http_serving_benchmark.md): FastAPI endpoint
    routing, validation, serialization을 포함한 latency를 확인합니다.
 
-최소 검증 명령:
+로컬 검증:
 
 ```bash
 uv sync --group dev
-make lint
-make test
+make check
 make benchmark-decoder
 ```
 
@@ -58,7 +67,7 @@ make benchmark-decoder
 - FastAPI HTTP endpoint benchmark
 - 실험 결과와 trade-off를 설명하는 포트폴리오 리포트
 
-## 현재 단계
+## 현재 상태
 
 현재 레포지토리는 데이터셋 파이프라인, 평가 지표, baseline, Semantic ID codec,
 Semantic ID 생성, Generative Retrieval 학습/평가 코드, naive trie constrained decoder,
@@ -68,12 +77,11 @@ constrained beam search, 학습 checkpoint 기반 API service와 mock service �
 최종 포트폴리오 수치는 MovieLens 32M 기준으로 생성했습니다. Latest Small은 빠른 개발과
 smoke test 용도로만 남기고, README의 대표 성능 수치는 `ml-32m` 결과를 사용합니다.
 
-완료 기준:
+전체 재현 명령:
 
 ```bash
-make check
+make download-ml32m
 make reproduce-ml32m
-make serve-api
 ```
 
 ## 실험 결과 요약
@@ -458,15 +466,15 @@ make benchmark-ml32m
 
 ## Serving 벤치마크
 
-Recommendation API의 service layer를 직접 호출해 사용자별 추천 생성 latency를 측정합니다.
-HTTP 서버를 띄우지 않기 때문에 FastAPI 직렬화, validation, network overhead를 제외한 모델 및
-decoder 비용을 볼 수 있습니다.
+Serving benchmark는 두 경로를 분리해서 봅니다.
+
+- `benchmark-serving`: service layer를 직접 호출해 모델과 decoder 중심 latency를 측정합니다.
+- `benchmark-api`: ASGI test client로 FastAPI endpoint를 호출해 routing, validation,
+  serialization, JSON decode 비용까지 포함합니다.
 
 ```bash
 make benchmark-serving
 ```
-
-FastAPI endpoint path까지 포함한 benchmark:
 
 ```bash
 make benchmark-api
@@ -630,8 +638,8 @@ Serving benchmark:
 - `static_decoding` package는 GitHub commit으로 고정해 index builder, PyTorch/JAX sparse mask
   kernel, PyTorch/JAX sparse transition harness, benchmark용 RandomModel을 통합했습니다. 다만
   TPU, GPU, `torch.compile` 기반 benchmark는 별도 환경 검증 대상으로 남겼습니다.
-- HTTP endpoint benchmark는 ASGI test client 기준입니다. 실제 외부 client 기준 latency는
-  uvicorn worker 설정, connection reuse, network hop까지 포함해 별도 측정할 수 있습니다.
+- HTTP endpoint benchmark는 ASGI test client 기준입니다. 실제 외부 client 기준 latency는 이번
+  프로젝트 범위에서 제외했습니다.
 
 ## static_decoding 통합 방식
 
