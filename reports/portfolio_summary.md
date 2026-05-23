@@ -30,6 +30,7 @@ Generative Retrieval 추천 시스템입니다.
 - naive trie 및 검증용 matrix decoder와의 mask 일치 검증
 - decoder latency, throughput, generated sequence validity benchmark
 - FastAPI recommendation endpoint와 model-backed serving benchmark
+- FastAPI HTTP endpoint benchmark
 
 ## 핵심 결과
 
@@ -38,19 +39,21 @@ MovieLens 32M 기준 결과입니다. Latest Small은 개발용 smoke test로만
 
 | 항목 | 결과 |
 | --- | ---: |
-| Generative Retrieval Recall@20 | 0.127978 |
-| Generative Retrieval NDCG@20 | 0.061858 |
-| Generative Retrieval MRR@20 | 0.043031 |
+| Generative Retrieval Recall@20 | 0.127769 |
+| Generative Retrieval NDCG@20 | 0.061637 |
+| Generative Retrieval MRR@20 | 0.042813 |
 | test invalid generation rate | 0.000000 |
 | decoder benchmark batch 512 speedup | 6.66x |
 | serving benchmark batch 128 평균 latency | 11.3422 ms |
 | serving benchmark batch 128 throughput | 88.15 req/s |
+| HTTP endpoint benchmark batch 128 평균 latency | 14.1033 ms |
+| HTTP endpoint benchmark batch 128 throughput | 70.89 req/s |
 
 해석:
 
 - 현재 generative model은 작은 Transformer를 1 epoch 학습한 baseline입니다.
 - `ml-32m` test split에서 Popularity baseline의 Recall@20 `0.058100`, item co-occurrence
-  baseline의 Recall@20 `0.099016`보다 높은 `0.127978`을 기록했습니다.
+  baseline의 Recall@20 `0.099016`보다 높은 `0.127769`을 기록했습니다.
 - constrained decoding 적용 후 존재하지 않는 Semantic ID 생성률을 0으로 유지했습니다.
 - 이 프로젝트의 핵심 성과는 추천 정확도 1등이 아니라, Generative Retrieval에서 constrained
   decoding을 실제 추천 pipeline과 benchmark, serving까지 연결한 것입니다.
@@ -98,6 +101,7 @@ make benchmark-ml32m
 - [ml-32m Generative Retrieval ranking](ml_32m_generative_eval.md)
 - [ml-32m decoder benchmark](ml_32m_decoder_benchmark.md)
 - [ml-32m serving benchmark](ml_32m_serving_benchmark.md)
+- [ml-32m HTTP endpoint benchmark](ml_32m_http_serving_benchmark.md)
 
 ## 산출물 정책
 
@@ -110,4 +114,4 @@ Git에는 코드, 테스트, 설정, 한국어 문서, 재현 가능한 실험 �
 - 더 큰 Transformer 설정과 longer training schedule 적용
 - 영화 metadata 또는 text embedding을 Semantic ID 생성에 결합
 - score calibration, diversity constraint, candidate reranking 추가
-- FastAPI HTTP endpoint 기준 latency benchmark 추가
+- 실제 외부 HTTP client 기준 uvicorn/network 포함 latency benchmark 추가

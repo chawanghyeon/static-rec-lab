@@ -32,6 +32,8 @@ decoding을 제약하는 전체 흐름을 구현하는 것입니다.
    constrained decoding을 적용한 추천 ranking 성능과 invalid generation rate를 확인합니다.
 6. [ml-32m Serving benchmark](reports/ml_32m_serving_benchmark.md): model-backed recommendation
    service의 latency를 확인합니다.
+7. [ml-32m HTTP endpoint benchmark](reports/ml_32m_http_serving_benchmark.md): FastAPI endpoint
+   routing, validation, serialization을 포함한 latency를 확인합니다.
 
 최소 검증 명령:
 
@@ -53,6 +55,7 @@ make benchmark-decoder
 - `static_decoding` 기반 constrained decoder
 - decoder latency 및 throughput benchmark
 - FastAPI 기반 추천 endpoint
+- FastAPI HTTP endpoint benchmark
 - 실험 결과와 trade-off를 설명하는 포트폴리오 리포트
 
 ## 현재 단계
@@ -82,7 +85,7 @@ Teacher-forcing 평가:
 
 | split | examples | loss | token accuracy | sequence accuracy |
 | --- | ---: | ---: | ---: | ---: |
-| valid | 200,873 | 1.797266 | 0.409831 | 0.013222 |
+| valid | 200,873 | 1.797114 | 0.410238 | 0.013272 |
 
 추천 ranking 평가:
 
@@ -90,14 +93,14 @@ Teacher-forcing 평가:
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
 | Popularity | test | 0.035138 | 0.058100 | 0.016817 | 0.022527 | 0.012848 |
 | Item co-occurrence | test | 0.063748 | 0.099016 | 0.034091 | 0.042943 | 0.027565 |
-| Generative Retrieval + static_decoding | test | 0.098195 | 0.127978 | 0.054127 | 0.061858 | 0.043031 |
+| Generative Retrieval + static_decoding | test | 0.097896 | 0.127769 | 0.053882 | 0.061637 | 0.042813 |
 
 생성 품질:
 
 - valid invalid generation rate: `0.000000`
 - test invalid generation rate: `0.000000`
 - test unknown targets: `102`
-- full ranking inference: valid `285,347.85 ms`, test `285,259.78 ms`
+- full ranking inference: valid `285,229.65 ms`, test `283,908.79 ms`
 - ranking inference batch size: `128`
 
 Decoder benchmark:
@@ -116,6 +119,8 @@ Serving benchmark:
   user_id `1..10000`, batch size `1, 32, 128`을 측정했습니다.
 - batch size 128 기준 평균 latency는 `11.3422 ms`, p95 latency는 `14.0557 ms`,
   throughput은 `88.15 req/s`입니다.
+- FastAPI endpoint benchmark는 ASGI test client 기준 batch size 128에서 평균 latency
+  `14.1033 ms`, p95 latency `18.3580 ms`, throughput `70.89 req/s`입니다.
 - 요청 단위 serving benchmark에서는 MPS보다 CPU가 더 빨랐습니다. 작은 단건 추론은 device
   전환 비용이 커서 CPU 대표 수치를 사용합니다.
 
@@ -461,6 +466,12 @@ decoder 비용을 볼 수 있습니다.
 make benchmark-serving
 ```
 
+FastAPI endpoint path까지 포함한 benchmark:
+
+```bash
+make benchmark-api
+```
+
 model-backed service를 측정하려면 API 실행과 같은 `STATIC_REC_*` 환경변수를 설정하고
 `SERVING_BENCHMARK_SERVICE=environment`로 실행합니다.
 
@@ -473,6 +484,17 @@ SERVING_BENCHMARK_SERVICE=environment \
 make benchmark-serving
 ```
 
+HTTP endpoint benchmark도 같은 환경변수를 사용합니다.
+
+```bash
+STATIC_REC_GENERATIVE_CHECKPOINT=artifacts/generative/model.pt \
+STATIC_REC_SEMANTIC_ID_PATH=artifacts/semantic_id/semantic_ids.json \
+STATIC_REC_STATIC_DECODING_INDEX_PATH=artifacts/semantic_id/static_decoding_index.npz \
+STATIC_REC_USER_HISTORY_PARQUET=data/processed/valid.parquet \
+SERVING_BENCHMARK_SERVICE=environment \
+make benchmark-api
+```
+
 MovieLens 32M checkpoint 기준:
 
 ```bash
@@ -483,6 +505,7 @@ make benchmark-ml32m
 
 ```text
 reports/ml_32m_serving_benchmark.md
+reports/ml_32m_http_serving_benchmark.md
 ```
 
 ## Recommendation API
@@ -592,6 +615,9 @@ Serving benchmark:
   호출합니다.
 - 따라서 측정값은 모델과 decoder 중심의 serving 비용이며, 실제 HTTP latency에는 FastAPI
   validation, serialization, network overhead가 추가됩니다.
+- `benchmark-api`는 ASGI test client로 FastAPI endpoint를 호출합니다. Network hop은 제외하지만
+  routing, request validation, response model serialization, client-side JSON decode 비용을
+  포함합니다.
 
 ## 한계와 다음 개선
 
@@ -604,8 +630,8 @@ Serving benchmark:
 - `static_decoding` package는 GitHub commit으로 고정해 index builder, PyTorch/JAX sparse mask
   kernel, PyTorch/JAX sparse transition harness, benchmark용 RandomModel을 통합했습니다. 다만
   TPU, GPU, `torch.compile` 기반 benchmark는 별도 환경 검증 대상으로 남겼습니다.
-- serving benchmark는 service 직접 호출 기준입니다. 실제 API endpoint benchmark는 별도 HTTP
-  client 기반 측정으로 확장할 수 있습니다.
+- HTTP endpoint benchmark는 ASGI test client 기준입니다. 실제 외부 client 기준 latency는
+  uvicorn worker 설정, connection reuse, network hop까지 포함해 별도 측정할 수 있습니다.
 
 ## static_decoding 통합 방식
 

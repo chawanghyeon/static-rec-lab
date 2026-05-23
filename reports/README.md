@@ -12,6 +12,7 @@
 - `ml_32m_generative_eval.md`: MovieLens 32M Generative Retrieval 추천 ranking 평가
 - `ml_32m_decoder_benchmark.md`: MovieLens 32M Semantic ID 기준 decoder latency/validity 벤치마크
 - `ml_32m_serving_benchmark.md`: MovieLens 32M model-backed recommendation service latency 벤치마크
+- `ml_32m_http_serving_benchmark.md`: MovieLens 32M FastAPI HTTP endpoint latency 벤치마크
 - [static_decoding_integration.md](static_decoding_integration.md): `static_decoding` package 통합 방식
 
 static_decoding index artifact는 `make build-static-decoding-index`로

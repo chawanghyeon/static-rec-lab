@@ -5,8 +5,13 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from apps.api.routes import recommendations_router
 from apps.api.services import (
     MockRecommendationService,
+    RecommendationService,
     build_recommendation_service_from_environment,
 )
 from recsys.benchmark import (
@@ -14,8 +19,10 @@ from recsys.benchmark import (
     ServingBenchmarkConfig,
     load_semantic_ids,
     run_decoder_benchmark,
+    run_http_endpoint_benchmark,
     run_serving_benchmark,
     write_decoder_benchmark_report,
+    write_http_endpoint_benchmark_report,
     write_serving_benchmark_report,
 )
 
@@ -25,6 +32,7 @@ def parse_args() -> argparse.Namespace:
     subparsers = parser.add_subparsers(dest="command", required=True)
     _add_decoder_parser(subparsers)
     _add_serving_parser(subparsers)
+    _add_serving_http_parser(subparsers)
     return parser.parse_args()
 
 
@@ -34,6 +42,8 @@ def main() -> None:
         benchmark_decoder(args)
     elif args.command == "serving":
         benchmark_serving(args)
+    elif args.command == "serving-http":
+        benchmark_serving_http(args)
     else:  # pragma: no cover
         raise ValueError(f"알 수 없는 benchmark command입니다: {args.command}")
 
@@ -93,6 +103,36 @@ def _add_serving_parser(subparsers: argparse._SubParsersAction[argparse.Argument
     parser.add_argument("--random-seed", type=int, default=42)
     parser.add_argument("--min-user-id", type=int, default=1)
     parser.add_argument("--max-user-id", type=int, default=10_000)
+
+
+def _add_serving_http_parser(
+    subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> None:
+    parser = subparsers.add_parser("serving-http", help="FastAPI HTTP endpoint benchmark")
+    parser.add_argument(
+        "--service",
+        choices=["mock", "environment"],
+        default="mock",
+        help="benchmark 대상 service. environment는 STATIC_REC_* 환경변수 설정을 사용한다.",
+    )
+    parser.add_argument(
+        "--report-path",
+        type=Path,
+        default=Path("reports/local/http_serving_benchmark.md"),
+        help="HTTP endpoint benchmark 리포트 저장 경로",
+    )
+    parser.add_argument("--batch-sizes", type=int, nargs="+", default=[1, 32, 128])
+    parser.add_argument("--warmup-iterations", type=int, default=3)
+    parser.add_argument("--iterations", type=int, default=10)
+    parser.add_argument("--k", type=int, default=20)
+    parser.add_argument("--random-seed", type=int, default=42)
+    parser.add_argument("--min-user-id", type=int, default=1)
+    parser.add_argument("--max-user-id", type=int, default=10_000)
+    parser.add_argument(
+        "--endpoint-template",
+        default="/recommendations/users/{user_id}?k={k}",
+        help="benchmark할 endpoint template. {user_id}, {k} placeholder가 필요하다.",
+    )
 
 
 def benchmark_decoder(args: argparse.Namespace) -> None:
@@ -188,6 +228,53 @@ def benchmark_serving(args: argparse.Namespace) -> None:
             f"throughput_req_s={result.throughput_requests_per_s:.2f}"
         )
     print(f"- report: {report_path}")
+
+
+def benchmark_serving_http(args: argparse.Namespace) -> None:
+    service = (
+        MockRecommendationService()
+        if args.service == "mock"
+        else build_recommendation_service_from_environment()
+    )
+    app = _create_benchmark_app(service)
+    client = TestClient(app)
+    config = ServingBenchmarkConfig(
+        batch_sizes=tuple(args.batch_sizes),
+        warmup_iterations=args.warmup_iterations,
+        iterations=args.iterations,
+        k=args.k,
+        random_seed=args.random_seed,
+        min_user_id=args.min_user_id,
+        max_user_id=args.max_user_id,
+        endpoint_template=args.endpoint_template,
+    )
+    summary = run_http_endpoint_benchmark(client, config=config, source=args.service)
+    report_path = write_http_endpoint_benchmark_report(args.report_path, summary)
+
+    print("HTTP endpoint benchmark 완료")
+    print(f"- 서비스: {summary.source}")
+    print(f"- endpoint: {summary.endpoint_template}")
+    print(f"- model: {summary.model_name}")
+    print(f"- decoder: {summary.decoder_name}")
+    for result in summary.results:
+        print(
+            f"- batch_size={result.batch_size}: "
+            f"mean_latency_ms={result.mean_latency_ms:.4f}, "
+            f"p95_latency_ms={result.p95_latency_ms:.4f}, "
+            f"throughput_req_s={result.throughput_requests_per_s:.2f}"
+        )
+    print(f"- report: {report_path}")
+
+
+def _create_benchmark_app(service: RecommendationService) -> FastAPI:
+    app = FastAPI(
+        title="static-rec-lab benchmark",
+        version="0.1.0",
+        description="static_decoding benchmark app",
+    )
+    app.state.recommendation_service = service
+    app.include_router(recommendations_router)
+    return app
 
 
 if __name__ == "__main__":

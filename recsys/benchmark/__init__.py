@@ -2,11 +2,14 @@
 
 from recsys.benchmark.benchmark_decoder import run_decoder_benchmark
 from recsys.benchmark.benchmark_serving import (
+    HttpEndpointBenchmarkSummary,
     ServingBenchmarkConfig,
     ServingBenchmarkError,
     ServingBenchmarkResult,
     ServingBenchmarkSummary,
+    run_http_endpoint_benchmark,
     run_serving_benchmark,
+    write_http_endpoint_benchmark_report,
     write_serving_benchmark_report,
 )
 from recsys.benchmark.decoder_data import generate_synthetic_semantic_ids, load_semantic_ids
@@ -27,6 +30,7 @@ __all__ = [
     "DecoderBenchmarkError",
     "DecoderBenchmarkResult",
     "DecoderBenchmarkSummary",
+    "HttpEndpointBenchmarkSummary",
     "ServingBenchmarkConfig",
     "ServingBenchmarkError",
     "ServingBenchmarkResult",
@@ -38,7 +42,9 @@ __all__ = [
     "generate_synthetic_semantic_ids",
     "load_semantic_ids",
     "run_decoder_benchmark",
+    "run_http_endpoint_benchmark",
     "run_serving_benchmark",
     "write_decoder_benchmark_report",
+    "write_http_endpoint_benchmark_report",
     "write_serving_benchmark_report",
 ]

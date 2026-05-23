@@ -58,6 +58,7 @@ else
 DECODER_BENCHMARK_SEMANTIC_ID_CLI_ARG :=
 endif
 SERVING_BENCHMARK_REPORT ?= reports/local/serving_benchmark.md
+HTTP_SERVING_BENCHMARK_REPORT ?= reports/local/http_serving_benchmark.md
 SERVING_BENCHMARK_BATCH_SIZES ?= 1 32 128
 SERVING_BENCHMARK_SERVICE ?= mock
 MIN_INTERACTIONS ?= 5
@@ -76,6 +77,7 @@ ML32M_GENERATIVE_REPORT ?= reports/ml_32m_generative.md
 ML32M_GENERATIVE_RANKING_REPORT ?= reports/ml_32m_generative_eval.md
 ML32M_DECODER_BENCHMARK_REPORT ?= reports/ml_32m_decoder_benchmark.md
 ML32M_SERVING_BENCHMARK_REPORT ?= reports/ml_32m_serving_benchmark.md
+ML32M_HTTP_SERVING_BENCHMARK_REPORT ?= reports/ml_32m_http_serving_benchmark.md
 ML32M_SEMANTIC_ID_BRANCHING_FACTOR ?= 32
 ML32M_GENERATIVE_BATCH_SIZE ?= 4096
 ML32M_GENERATIVE_BEAM_SIZE ?= 20
@@ -87,7 +89,7 @@ ML32M_GENERATIVE_AMP_DTYPE ?= float16
 ML32M_DEVICE ?= auto
 ML32M_SERVING_DEVICE ?= cpu
 
-.PHONY: format lint test download-movielens preprocess train-baseline eval-baseline build-semantic-ids validate-semantic-ids build-static-decoding-index train-generative eval-generative eval-generative-ranking benchmark-decoder benchmark-serving serve-api check download-ml32m preprocess-ml32m baseline-ml32m semantic-ids-ml32m generative-ml32m benchmark-ml32m reproduce-ml32m
+.PHONY: format lint test download-movielens preprocess train-baseline eval-baseline build-semantic-ids validate-semantic-ids build-static-decoding-index train-generative eval-generative eval-generative-ranking benchmark-decoder benchmark-serving benchmark-api serve-api check download-ml32m preprocess-ml32m baseline-ml32m semantic-ids-ml32m generative-ml32m benchmark-ml32m reproduce-ml32m
 
 format:
 	$(UV) run ruff format $(PYTHON_TARGETS)
@@ -201,6 +203,12 @@ benchmark-serving:
 		--report-path $(SERVING_BENCHMARK_REPORT) \
 		--batch-sizes $(SERVING_BENCHMARK_BATCH_SIZES)
 
+benchmark-api:
+	$(UV) run python scripts/benchmark.py serving-http \
+		--service $(SERVING_BENCHMARK_SERVICE) \
+		--report-path $(HTTP_SERVING_BENCHMARK_REPORT) \
+		--batch-sizes $(SERVING_BENCHMARK_BATCH_SIZES)
+
 download-ml32m:
 	$(MAKE) download-movielens \
 		MOVIELENS_DATASET=ml-32m \
@@ -275,6 +283,14 @@ benchmark-ml32m:
 	$(MAKE) benchmark-serving \
 		SERVING_BENCHMARK_SERVICE=environment \
 		SERVING_BENCHMARK_REPORT=$(ML32M_SERVING_BENCHMARK_REPORT)
+	STATIC_REC_GENERATIVE_CHECKPOINT=$(ML32M_GENERATIVE_CHECKPOINT) \
+	STATIC_REC_SEMANTIC_ID_PATH=$(ML32M_SEMANTIC_ID_PATH) \
+	STATIC_REC_STATIC_DECODING_INDEX_PATH=$(ML32M_STATIC_DECODING_INDEX_PATH) \
+	STATIC_REC_USER_HISTORY_PARQUET=$(ML32M_PROCESSED_DIR)/valid.parquet \
+	STATIC_REC_DEVICE=$(ML32M_SERVING_DEVICE) \
+	$(MAKE) benchmark-api \
+		SERVING_BENCHMARK_SERVICE=environment \
+		HTTP_SERVING_BENCHMARK_REPORT=$(ML32M_HTTP_SERVING_BENCHMARK_REPORT)
 
 reproduce-ml32m: preprocess-ml32m baseline-ml32m semantic-ids-ml32m generative-ml32m benchmark-ml32m
 

@@ -7,7 +7,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from statistics import fmean
-from typing import Protocol
+from string import Formatter
+from typing import Any, Protocol, cast
 
 import numpy as np
 
@@ -26,6 +27,22 @@ class ServingBenchmarkService(Protocol):
         """사용자별 추천 결과를 반환한다."""
 
 
+class HttpBenchmarkResponse(Protocol):
+    """HTTP benchmark가 요구하는 response contract."""
+
+    status_code: int
+
+    def json(self) -> Any:
+        """JSON response body를 반환한다."""
+
+
+class HttpBenchmarkClient(Protocol):
+    """HTTP benchmark가 요구하는 client contract."""
+
+    def get(self, url: str) -> HttpBenchmarkResponse:
+        """GET request를 실행한다."""
+
+
 @dataclass(frozen=True)
 class ServingBenchmarkConfig:
     """Serving benchmark 실행 설정."""
@@ -37,6 +54,7 @@ class ServingBenchmarkConfig:
     random_seed: int = 42
     min_user_id: int = 1
     max_user_id: int = 10_000
+    endpoint_template: str = "/recommendations/users/{user_id}?k={k}"
 
 
 @dataclass(frozen=True)
@@ -60,6 +78,18 @@ class ServingBenchmarkSummary:
     source: str
     model_name: str
     decoder_name: str
+    results: tuple[ServingBenchmarkResult, ...]
+
+
+@dataclass(frozen=True)
+class HttpEndpointBenchmarkSummary:
+    """HTTP endpoint benchmark 전체 결과."""
+
+    config: ServingBenchmarkConfig
+    source: str
+    model_name: str
+    decoder_name: str
+    endpoint_template: str
     results: tuple[ServingBenchmarkResult, ...]
 
 
@@ -166,6 +196,122 @@ def write_serving_benchmark_report(
     return output_path
 
 
+def run_http_endpoint_benchmark(
+    client: HttpBenchmarkClient,
+    *,
+    config: ServingBenchmarkConfig | None = None,
+    source: str = "http-endpoint",
+) -> HttpEndpointBenchmarkSummary:
+    """FastAPI/HTTP endpoint latency를 측정한다."""
+    config = ServingBenchmarkConfig() if config is None else config
+    _validate_config(config)
+    _validate_endpoint_template(config.endpoint_template)
+    rng = np.random.default_rng(config.random_seed)
+    results: list[ServingBenchmarkResult] = []
+    model_name = ""
+    decoder_name = ""
+
+    for batch_size in config.batch_sizes:
+        user_batches = _sample_user_batches(
+            rng=rng,
+            batch_size=batch_size,
+            total_iterations=config.warmup_iterations + config.iterations,
+            min_user_id=config.min_user_id,
+            max_user_id=config.max_user_id,
+        )
+        _warm_up_http_endpoint(
+            client=client,
+            user_batches=user_batches[: config.warmup_iterations],
+            k=config.k,
+            endpoint_template=config.endpoint_template,
+        )
+        request_latencies_ns, measured_elapsed_ns, batch_model_name, batch_decoder_name = (
+            _measure_http_endpoint(
+                client=client,
+                user_batches=user_batches[config.warmup_iterations :],
+                k=config.k,
+                endpoint_template=config.endpoint_template,
+            )
+        )
+        if not model_name:
+            model_name = batch_model_name
+            decoder_name = batch_decoder_name
+        results.append(
+            _summarize_result(
+                batch_size=batch_size,
+                request_latencies_ns=request_latencies_ns,
+                measured_elapsed_ns=measured_elapsed_ns,
+            )
+        )
+
+    return HttpEndpointBenchmarkSummary(
+        config=config,
+        source=source,
+        model_name=model_name,
+        decoder_name=decoder_name,
+        endpoint_template=config.endpoint_template,
+        results=tuple(results),
+    )
+
+
+def write_http_endpoint_benchmark_report(
+    path: str | Path,
+    summary: HttpEndpointBenchmarkSummary,
+) -> Path:
+    """HTTP endpoint benchmark 결과를 한국어 markdown report로 저장한다."""
+    output_path = Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    lines = [
+        "# HTTP Endpoint 벤치마크 리포트",
+        "",
+        "FastAPI recommendation endpoint를 HTTP client contract로 호출해 latency를 측정합니다.",
+        "이 벤치마크는 endpoint routing, request validation, response model serialization,",
+        "client-side JSON decode 비용을 포함합니다. 별도 network hop은 포함하지 않습니다.",
+        "",
+        "## 설정",
+        "",
+        f"- 서비스 소스: `{summary.source}`",
+        f"- endpoint: `{summary.endpoint_template}`",
+        f"- model: `{summary.model_name}`",
+        f"- decoder: `{summary.decoder_name}`",
+        f"- k: {summary.config.k}",
+        f"- batch sizes: {', '.join(str(size) for size in summary.config.batch_sizes)}",
+        f"- warmup iterations: {summary.config.warmup_iterations:,}",
+        f"- measured iterations: {summary.config.iterations:,}",
+        f"- random seed: {summary.config.random_seed}",
+        f"- user_id range: {summary.config.min_user_id}..{summary.config.max_user_id}",
+        "",
+        "## 결과",
+        "",
+        "| batch_size | 요청 수 | 평균 latency ms | p50 latency ms | p95 latency ms | "
+        "최대 latency ms | throughput req/s |",
+        "|---:|---:|---:|---:|---:|---:|---:|",
+    ]
+    for result in summary.results:
+        lines.append(
+            f"| {result.batch_size:,} | {result.total_requests:,} | "
+            f"{result.mean_latency_ms:.4f} | {result.p50_latency_ms:.4f} | "
+            f"{result.p95_latency_ms:.4f} | {result.max_latency_ms:.4f} | "
+            f"{result.throughput_requests_per_s:,.2f} |"
+        )
+
+    lines.extend(
+        [
+            "",
+            "## 해석",
+            "",
+            "- latency는 `GET /recommendations/users/{user_id}?k=...` 호출 기준입니다.",
+            "- ASGI test client를 사용하므로 FastAPI endpoint 비용은 포함하지만 network hop은 "
+            "포함하지 않습니다.",
+            "- service 직접 호출 benchmark와 비교하면 API routing, validation, serialization, "
+            "JSON decode overhead를 볼 수 있습니다.",
+            "",
+        ]
+    )
+    output_path.write_text("\n".join(lines), encoding="utf-8")
+    return output_path
+
+
 def _validate_config(config: ServingBenchmarkConfig) -> None:
     if not config.batch_sizes:
         msg = "batch_sizes는 비어 있을 수 없습니다."
@@ -187,6 +333,21 @@ def _validate_config(config: ServingBenchmarkConfig) -> None:
         raise ServingBenchmarkError(msg)
     if config.max_user_id < config.min_user_id:
         msg = "max_user_id는 min_user_id 이상이어야 합니다."
+        raise ServingBenchmarkError(msg)
+
+
+def _validate_endpoint_template(endpoint_template: str) -> None:
+    field_names = {
+        field_name
+        for _, field_name, _, _ in Formatter().parse(endpoint_template)
+        if field_name is not None
+    }
+    required_fields = {"user_id", "k"}
+    if not required_fields.issubset(field_names):
+        msg = (
+            "endpoint_template에는 {user_id}와 {k} placeholder가 필요합니다: "
+            f"{endpoint_template}"
+        )
         raise ServingBenchmarkError(msg)
 
 
@@ -235,6 +396,89 @@ def _measure_service(
                 raise ServingBenchmarkError(msg)
     elapsed_ns = time.perf_counter_ns() - started_ns
     return tuple(request_latencies_ns), elapsed_ns
+
+
+def _warm_up_http_endpoint(
+    *,
+    client: HttpBenchmarkClient,
+    user_batches: np.ndarray,
+    k: int,
+    endpoint_template: str,
+) -> None:
+    for user_ids in user_batches:
+        for user_id in user_ids:
+            _request_http_endpoint(
+                client=client,
+                user_id=int(user_id),
+                k=k,
+                endpoint_template=endpoint_template,
+            )
+
+
+def _measure_http_endpoint(
+    *,
+    client: HttpBenchmarkClient,
+    user_batches: np.ndarray,
+    k: int,
+    endpoint_template: str,
+) -> tuple[tuple[int, ...], int, str, str]:
+    request_latencies_ns: list[int] = []
+    model_name = ""
+    decoder_name = ""
+    started_ns = time.perf_counter_ns()
+    for user_ids in user_batches:
+        for user_id in user_ids:
+            request_started_ns = time.perf_counter_ns()
+            payload = _request_http_endpoint(
+                client=client,
+                user_id=int(user_id),
+                k=k,
+                endpoint_template=endpoint_template,
+            )
+            request_latencies_ns.append(time.perf_counter_ns() - request_started_ns)
+            if not model_name:
+                model_name = str(payload["model"])
+                decoder_name = str(payload["decoder"])
+    elapsed_ns = time.perf_counter_ns() - started_ns
+    return tuple(request_latencies_ns), elapsed_ns, model_name, decoder_name
+
+
+def _request_http_endpoint(
+    *,
+    client: HttpBenchmarkClient,
+    user_id: int,
+    k: int,
+    endpoint_template: str,
+) -> dict[str, Any]:
+    url = endpoint_template.format(user_id=user_id, k=k)
+    response = client.get(url)
+    if response.status_code != 200:
+        msg = f"HTTP endpoint가 200이 아닌 상태를 반환했습니다: {response.status_code}"
+        raise ServingBenchmarkError(msg)
+    payload = cast(dict[str, Any], response.json())
+    _validate_http_payload(payload=payload, expected_user_id=user_id, k=k)
+    return payload
+
+
+def _validate_http_payload(*, payload: dict[str, Any], expected_user_id: int, k: int) -> None:
+    required_fields = {"user_id", "model", "decoder", "items", "latency_ms"}
+    missing_fields = sorted(required_fields - set(payload))
+    if missing_fields:
+        msg = f"HTTP response에 필요한 필드가 없습니다: {missing_fields}"
+        raise ServingBenchmarkError(msg)
+    if int(payload["user_id"]) != expected_user_id:
+        msg = f"HTTP response user_id가 요청과 다릅니다: {payload['user_id']} != {expected_user_id}"
+        raise ServingBenchmarkError(msg)
+    items = payload["items"]
+    if not isinstance(items, list):
+        msg = "HTTP response items는 list여야 합니다."
+        raise ServingBenchmarkError(msg)
+    if len(items) > k:
+        msg = f"HTTP endpoint가 k보다 많은 추천을 반환했습니다: {len(items)} > {k}"
+        raise ServingBenchmarkError(msg)
+    if float(payload["latency_ms"]) < 0:
+        msg = "HTTP response latency_ms는 0 이상이어야 합니다."
+        raise ServingBenchmarkError(msg)
 
 
 def _summarize_result(
