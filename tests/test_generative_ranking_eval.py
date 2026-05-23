@@ -9,6 +9,7 @@ from recsys.decoding.static_decoding import StaticDecodingIndex
 from recsys.evaluation import (
     GenerativeRankingEvaluation,
     evaluate_generative_ranking,
+    evaluate_generative_ranking_from_parquet,
     recommend_batch_with_constrained_generation,
     recommend_with_constrained_generation,
     write_generative_ranking_report,
@@ -17,7 +18,7 @@ from recsys.models import (
     SEMANTIC_TOKEN_OFFSET,
     GenerativeRetriever,
     GenerativeRetrieverConfig,
-    build_generative_dataset,
+    build_item_index_from_codec,
 )
 from recsys.semantic_id import SemanticIdCodec
 
@@ -30,11 +31,11 @@ def test_evaluate_generative_ranking_computes_recommendation_metrics() -> None:
             "target_item_id": [20, 999],
         }
     )
-    bundle = build_generative_dataset(_training_frame(), codec)
+    item_to_index = build_item_index_from_codec(codec)
 
     evaluation = evaluate_generative_ranking(
         model=cast(GenerativeRetriever, _FakeGenerativeModel()),
-        item_to_index=bundle.item_to_index,
+        item_to_index=item_to_index,
         codec=codec,
         eval_frame=frame,
         split_name="valid",
@@ -66,11 +67,11 @@ def test_evaluate_generative_ranking_loads_static_decoding_index_artifact(
             "target_item_id": [20],
         }
     )
-    bundle = build_generative_dataset(_training_frame(), codec)
+    item_to_index = build_item_index_from_codec(codec)
 
     evaluation = evaluate_generative_ranking(
         model=cast(GenerativeRetriever, _FakeGenerativeModel()),
-        item_to_index=bundle.item_to_index,
+        item_to_index=item_to_index,
         codec=codec,
         eval_frame=frame,
         split_name="valid",
@@ -91,11 +92,11 @@ def test_evaluate_generative_ranking_supports_batched_inference() -> None:
             "target_item_id": [20, 999],
         }
     )
-    bundle = build_generative_dataset(_training_frame(), codec)
+    item_to_index = build_item_index_from_codec(codec)
 
     single_evaluation = evaluate_generative_ranking(
         model=cast(GenerativeRetriever, _FakeGenerativeModel()),
-        item_to_index=bundle.item_to_index,
+        item_to_index=item_to_index,
         codec=codec,
         eval_frame=frame,
         split_name="valid",
@@ -106,7 +107,7 @@ def test_evaluate_generative_ranking_supports_batched_inference() -> None:
     )
     batched_evaluation = evaluate_generative_ranking(
         model=cast(GenerativeRetriever, _FakeGenerativeModel()),
-        item_to_index=bundle.item_to_index,
+        item_to_index=item_to_index,
         codec=codec,
         eval_frame=frame,
         split_name="valid",
@@ -129,16 +130,46 @@ def test_evaluate_generative_ranking_supports_batched_inference() -> None:
     )
 
 
+def test_evaluate_generative_ranking_from_parquet_streams_rows(tmp_path: Path) -> None:
+    codec = _codec()
+    item_to_index = build_item_index_from_codec(codec)
+    frame = pd.DataFrame(
+        {
+            "history_item_ids": [[10], [30]],
+            "target_item_id": [20, 999],
+        }
+    )
+    eval_path = tmp_path / "valid.parquet"
+    frame.to_parquet(eval_path, index=False)
+
+    evaluation = evaluate_generative_ranking_from_parquet(
+        model=cast(GenerativeRetriever, _FakeGenerativeModel()),
+        item_to_index=item_to_index,
+        codec=codec,
+        eval_parquet=eval_path,
+        split_name="valid",
+        cutoffs=(1, 2),
+        beam_size=3,
+        device=torch.device("cpu"),
+        inference_batch_size=2,
+        parquet_batch_size=1,
+    )
+
+    assert evaluation.num_examples == 2
+    assert evaluation.unknown_target_examples == 1
+    assert evaluation.metrics_by_k[1].recall == pytest.approx(0.5)
+
+
 def test_recommend_with_constrained_generation_filters_history_items() -> None:
     codec = _codec()
-    bundle = build_generative_dataset(_training_frame(), codec)
+    item_to_index = build_item_index_from_codec(codec)
 
     result = recommend_with_constrained_generation(
         model=cast(GenerativeRetriever, _FakeGenerativeModel()),
         decoder=StaticDecodingIndex.from_codec(codec, dense_lookup_layers=1),
         codec=codec,
         history_item_ids=[20],
-        item_to_index=bundle.item_to_index,
+        item_to_index=item_to_index,
         k=2,
         beam_size=3,
         device=torch.device("cpu"),
@@ -151,7 +182,7 @@ def test_recommend_with_constrained_generation_filters_history_items() -> None:
 
 def test_recommend_batch_with_constrained_generation_matches_single_results() -> None:
     codec = _codec()
-    bundle = build_generative_dataset(_training_frame(), codec)
+    item_to_index = build_item_index_from_codec(codec)
     decoder = StaticDecodingIndex.from_codec(codec, dense_lookup_layers=1)
     model = cast(GenerativeRetriever, _FakeGenerativeModel())
 
@@ -161,7 +192,7 @@ def test_recommend_batch_with_constrained_generation_matches_single_results() ->
             decoder=decoder,
             codec=codec,
             history_item_ids=history,
-            item_to_index=bundle.item_to_index,
+            item_to_index=item_to_index,
             k=2,
             beam_size=3,
             device=torch.device("cpu"),
@@ -173,7 +204,7 @@ def test_recommend_batch_with_constrained_generation_matches_single_results() ->
         decoder=decoder,
         codec=codec,
         history_item_ids_batch=([20], [10]),
-        item_to_index=bundle.item_to_index,
+        item_to_index=item_to_index,
         k=2,
         beam_size=3,
         device=torch.device("cpu"),
@@ -195,10 +226,10 @@ def test_write_generative_ranking_report(tmp_path: Path) -> None:
             "target_item_id": [20],
         }
     )
-    bundle = build_generative_dataset(_training_frame(), codec)
+    item_to_index = build_item_index_from_codec(codec)
     evaluation = evaluate_generative_ranking(
         model=cast(GenerativeRetriever, _FakeGenerativeModel()),
-        item_to_index=bundle.item_to_index,
+        item_to_index=item_to_index,
         codec=codec,
         eval_frame=frame,
         split_name="valid",
@@ -286,14 +317,5 @@ def _codec() -> SemanticIdCodec:
             20: [0, 1],
             30: [1, 2],
             40: [2, 3],
-        }
-    )
-
-
-def _training_frame() -> pd.DataFrame:
-    return pd.DataFrame(
-        {
-            "history_item_ids": [[10], [10, 20], [30]],
-            "target_item_id": [20, 30, 40],
         }
     )

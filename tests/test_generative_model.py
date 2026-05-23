@@ -1,25 +1,19 @@
-from collections.abc import Iterable
 from pathlib import Path
-from typing import cast
 
 import pandas as pd
 import torch
-from torch.utils.data import DataLoader
 
 from recsys.decoding import StaticDecodingIndex
 from recsys.models import (
     BOS_TOKEN_ID,
-    GenerativeBatch,
     GenerativeParquetBatchIterableDataset,
-    GenerativeParquetIterableDataset,
     GenerativeRetriever,
     GenerativeRetrieverConfig,
-    build_generative_dataset,
     build_item_index_from_codec,
-    collate_generative_examples,
     evaluate_model,
     generate_semantic_ids_batch_with_static_decoding,
     generate_semantic_ids_with_static_decoding,
+    infer_semantic_vocab_size,
     load_checkpoint,
     save_checkpoint,
     train_one_epoch,
@@ -27,36 +21,48 @@ from recsys.models import (
 from recsys.semantic_id import SemanticIdCodec
 
 
-def test_build_generative_dataset_maps_history_and_semantic_tokens() -> None:
-    frame = _sample_frame()
+def test_generative_parquet_batch_iterable_dataset_streams_batches(tmp_path: Path) -> None:
     codec = _sample_codec()
+    dataset = _sample_dataset(tmp_path, codec, batch_size=2, parquet_batch_size=2)
 
-    bundle = build_generative_dataset(frame, codec)
+    batches = list(dataset)
 
-    assert len(bundle.dataset) == 3
-    assert bundle.semantic_id_length == 3
-    assert bundle.semantic_vocab_size == 7
-    assert bundle.item_vocab_size >= 6
-    example = bundle.dataset[0]
-    assert example.history_item_indices
-    assert example.target_token_ids == (2, 3, 4)
-
-
-def test_collate_generative_examples_pads_history_and_shifts_decoder_input() -> None:
-    bundle = build_generative_dataset(_sample_frame(), _sample_codec())
-
-    batch = collate_generative_examples([bundle.dataset[0], bundle.dataset[1]])
-
-    assert batch.history_item_ids.shape == (2, 2)
-    assert batch.history_padding_mask.shape == (2, 2)
-    assert batch.decoder_input_ids[:, 0].tolist() == [BOS_TOKEN_ID, BOS_TOKEN_ID]
-    assert torch.equal(batch.decoder_input_ids[:, 1:], batch.target_token_ids[:, :-1])
+    assert len(batches) == 2
+    assert batches[0].history_item_ids.shape[0] == 2
+    assert batches[0].target_token_ids.shape == (2, 3)
+    assert batches[0].decoder_input_ids[:, 0].tolist() == [BOS_TOKEN_ID, BOS_TOKEN_ID]
+    assert torch.equal(batches[0].decoder_input_ids[:, 1:], batches[0].target_token_ids[:, :-1])
+    assert batches[0].history_item_ids[0, 0].item() == 1
+    assert batches[0].target_token_ids[0].tolist() == [2, 3, 4]
+    assert batches[1].history_item_ids.shape[0] == 1
 
 
-def test_generative_retriever_forward_shape() -> None:
-    bundle = build_generative_dataset(_sample_frame(), _sample_codec())
-    batch = collate_generative_examples([bundle.dataset[0], bundle.dataset[1]])
-    model = _tiny_model(bundle.item_vocab_size, bundle.semantic_vocab_size)
+def test_generative_parquet_batch_iterable_dataset_filters_unknown_targets(
+    tmp_path: Path,
+) -> None:
+    codec = _sample_codec()
+    dataset = _sample_dataset(tmp_path, codec, batch_size=8, parquet_batch_size=4)
+
+    batch = next(iter(dataset))
+
+    assert batch.target_token_ids.shape[0] == 3
+
+
+def test_generative_parquet_batch_iterable_dataset_respects_max_examples(
+    tmp_path: Path,
+) -> None:
+    codec = _sample_codec()
+    dataset = _sample_dataset(tmp_path, codec, batch_size=8, max_examples=2)
+
+    batch = next(iter(dataset))
+
+    assert batch.target_token_ids.shape[0] == 2
+
+
+def test_generative_retriever_forward_shape(tmp_path: Path) -> None:
+    codec = _sample_codec()
+    batch = next(iter(_sample_dataset(tmp_path, codec, batch_size=2)))
+    model = _tiny_model(_item_vocab_size(codec), infer_semantic_vocab_size(codec))
 
     logits = model(
         batch.history_item_ids,
@@ -64,92 +70,44 @@ def test_generative_retriever_forward_shape() -> None:
         batch.decoder_input_ids,
     )
 
-    assert logits.shape == (2, bundle.semantic_id_length, bundle.semantic_vocab_size)
+    assert logits.shape == (2, codec.semantic_id_length, infer_semantic_vocab_size(codec))
 
 
 def test_train_evaluate_and_checkpoint_roundtrip(tmp_path: Path) -> None:
     torch.manual_seed(7)
-    bundle = build_generative_dataset(_sample_frame(), _sample_codec())
-    model = _tiny_model(bundle.item_vocab_size, bundle.semantic_vocab_size)
-    dataloader = cast(
-        Iterable[GenerativeBatch],
-        DataLoader(
-            bundle.dataset,
-            batch_size=2,
-            shuffle=False,
-            collate_fn=collate_generative_examples,
-        ),
-    )
+    codec = _sample_codec()
+    item_to_index = build_item_index_from_codec(codec)
+    model = _tiny_model(_item_vocab_size(codec), infer_semantic_vocab_size(codec))
+    train_dataset = _sample_dataset(tmp_path, codec, batch_size=2)
+    eval_dataset = _sample_dataset(tmp_path, codec, batch_size=2)
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
     device = torch.device("cpu")
 
-    train_metrics = train_one_epoch(model, dataloader, optimizer, device=device)
-    eval_metrics = evaluate_model(model, dataloader, device=device)
+    train_metrics = train_one_epoch(model, train_dataset, optimizer, device=device)
+    eval_metrics = evaluate_model(model, eval_dataset, device=device)
     checkpoint_path = save_checkpoint(
         tmp_path / "model.pt",
         model=model,
-        item_to_index=bundle.item_to_index,
+        item_to_index=item_to_index,
         metrics=eval_metrics,
     )
-    loaded_model, item_to_index = load_checkpoint(checkpoint_path, device=device)
+    loaded_model, loaded_item_to_index = load_checkpoint(checkpoint_path, device=device)
 
-    assert train_metrics.num_examples == len(bundle.dataset)
+    assert train_metrics.num_examples == 3
     assert eval_metrics.loss > 0
-    assert item_to_index == bundle.item_to_index
+    assert loaded_item_to_index == item_to_index
     assert isinstance(loaded_model, GenerativeRetriever)
-
-
-def test_generative_parquet_iterable_dataset_streams_examples(tmp_path: Path) -> None:
-    codec = _sample_codec()
-    frame = _sample_frame()
-    path = tmp_path / "train.parquet"
-    frame.to_parquet(path, index=False)
-    item_to_index = build_item_index_from_codec(codec)
-
-    dataset = GenerativeParquetIterableDataset(
-        path,
-        codec,
-        item_to_index=item_to_index,
-        parquet_batch_size=1,
-    )
-
-    examples = list(dataset)
-
-    assert len(examples) == 3
-    assert examples[0].history_item_indices == (1,)
-    assert examples[0].target_token_ids == (2, 3, 4)
-
-
-def test_generative_parquet_batch_iterable_dataset_streams_batches(tmp_path: Path) -> None:
-    codec = _sample_codec()
-    frame = _sample_frame()
-    path = tmp_path / "train.parquet"
-    frame.to_parquet(path, index=False)
-
-    dataset = GenerativeParquetBatchIterableDataset(
-        path,
-        codec,
-        item_to_index=build_item_index_from_codec(codec),
-        batch_size=2,
-        parquet_batch_size=2,
-    )
-
-    batches = list(dataset)
-
-    assert len(batches) == 2
-    assert batches[0].history_item_ids.shape[0] == 2
-    assert batches[0].target_token_ids.shape == (2, 3)
-    assert batches[1].history_item_ids.shape[0] == 1
 
 
 def test_generate_semantic_ids_with_static_decoding_returns_valid_results() -> None:
     torch.manual_seed(7)
     codec = _sample_codec()
-    bundle = build_generative_dataset(_sample_frame(), codec)
-    model = _tiny_model(bundle.item_vocab_size, bundle.semantic_vocab_size)
+    item_to_index = build_item_index_from_codec(codec)
+    semantic_vocab_size = infer_semantic_vocab_size(codec)
+    model = _tiny_model(_item_vocab_size(codec), semantic_vocab_size)
     index = StaticDecodingIndex.from_codec(
         codec,
-        vocab_size=bundle.semantic_vocab_size,
+        vocab_size=semantic_vocab_size,
         dense_lookup_layers=2,
     )
 
@@ -157,7 +115,7 @@ def test_generate_semantic_ids_with_static_decoding_returns_valid_results() -> N
         model=model,
         index=index,
         history_item_ids=[10, 20],
-        item_to_index=bundle.item_to_index,
+        item_to_index=item_to_index,
         beam_size=3,
         max_results=2,
         device=torch.device("cpu"),
@@ -173,11 +131,12 @@ def test_generate_semantic_ids_with_static_decoding_returns_valid_results() -> N
 def test_generate_semantic_ids_batch_with_static_decoding_matches_single_results() -> None:
     torch.manual_seed(7)
     codec = _sample_codec()
-    bundle = build_generative_dataset(_sample_frame(), codec)
-    model = _tiny_model(bundle.item_vocab_size, bundle.semantic_vocab_size)
+    item_to_index = build_item_index_from_codec(codec)
+    semantic_vocab_size = infer_semantic_vocab_size(codec)
+    model = _tiny_model(_item_vocab_size(codec), semantic_vocab_size)
     index = StaticDecodingIndex.from_codec(
         codec,
-        vocab_size=bundle.semantic_vocab_size,
+        vocab_size=semantic_vocab_size,
         dense_lookup_layers=2,
     )
     histories = ([10, 20], [30, 40])
@@ -187,7 +146,7 @@ def test_generate_semantic_ids_batch_with_static_decoding_matches_single_results
             model=model,
             index=index,
             history_item_ids=history,
-            item_to_index=bundle.item_to_index,
+            item_to_index=item_to_index,
             beam_size=3,
             max_results=2,
             device=torch.device("cpu"),
@@ -198,7 +157,7 @@ def test_generate_semantic_ids_batch_with_static_decoding_matches_single_results
         model=model,
         index=index,
         history_item_ids_batch=histories,
-        item_to_index=bundle.item_to_index,
+        item_to_index=item_to_index,
         beam_size=3,
         max_results=2,
         device=torch.device("cpu"),
@@ -209,6 +168,35 @@ def test_generate_semantic_ids_batch_with_static_decoding_matches_single_results
     ] == [
         [beam_result.semantic_id for beam_result in row_results] for row_results in single_results
     ]
+
+
+def _sample_dataset(
+    tmp_path: Path,
+    codec: SemanticIdCodec,
+    *,
+    batch_size: int,
+    max_examples: int | None = None,
+    parquet_batch_size: int = 2,
+) -> GenerativeParquetBatchIterableDataset:
+    return GenerativeParquetBatchIterableDataset(
+        _write_sample_parquet(tmp_path),
+        codec,
+        item_to_index=build_item_index_from_codec(codec),
+        batch_size=batch_size,
+        max_examples=max_examples,
+        parquet_batch_size=parquet_batch_size,
+    )
+
+
+def _write_sample_parquet(tmp_path: Path) -> Path:
+    path = tmp_path / "train.parquet"
+    _sample_frame().to_parquet(path, index=False)
+    return path
+
+
+def _item_vocab_size(codec: SemanticIdCodec) -> int:
+    item_to_index = build_item_index_from_codec(codec)
+    return max(item_to_index.values(), default=1) + 1
 
 
 def _tiny_model(item_vocab_size: int, semantic_vocab_size: int) -> GenerativeRetriever:

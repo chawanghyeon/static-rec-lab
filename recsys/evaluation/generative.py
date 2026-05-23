@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
 from typing import Any, cast
 
 import pandas as pd
+import pyarrow.parquet as pq
 import torch
 
 from recsys.data import coerce_item_ids
@@ -61,6 +62,12 @@ class GenerativeRankingEvaluation:
         return self.invalid_sequences / self.generated_sequences
 
 
+@dataclass(frozen=True)
+class _EvaluationRow:
+    history_item_ids: object
+    target_item_id: int
+
+
 def evaluate_generative_ranking(
     *,
     model: GenerativeRetriever,
@@ -76,6 +83,81 @@ def evaluate_generative_ranking(
 ) -> GenerativeRankingEvaluation:
     """Generative model + STATIC decoder를 baseline과 같은 ranking metric으로 평가한다."""
     _validate_eval_frame(eval_frame)
+    rows = (
+        _EvaluationRow(
+            history_item_ids=row.history_item_ids,
+            target_item_id=int(cast(Any, row.target_item_id)),
+        )
+        for row in eval_frame.itertuples(index=False)
+    )
+    return _evaluate_generative_ranking_rows(
+        model=model,
+        item_to_index=item_to_index,
+        codec=codec,
+        rows=rows,
+        split_name=split_name,
+        cutoffs=cutoffs,
+        beam_size=beam_size,
+        device=device,
+        static_decoding_index_path=static_decoding_index_path,
+        inference_batch_size=inference_batch_size,
+    )
+
+
+def evaluate_generative_ranking_from_parquet(
+    *,
+    model: GenerativeRetriever,
+    item_to_index: Mapping[int, int],
+    codec: SemanticIdCodec,
+    eval_parquet: str | Path,
+    split_name: str,
+    cutoffs: Sequence[int],
+    beam_size: int,
+    device: torch.device,
+    static_decoding_index_path: str | Path | None = None,
+    inference_batch_size: int = 1,
+    max_examples: int | None = None,
+    parquet_batch_size: int = 65_536,
+) -> GenerativeRankingEvaluation:
+    """평가 parquet를 streaming으로 읽어 Generative Retrieval ranking을 평가한다."""
+    if max_examples is not None and max_examples < 1:
+        msg = "max_examples는 None이거나 1 이상이어야 합니다."
+        raise ValueError(msg)
+    if parquet_batch_size < 1:
+        msg = "parquet_batch_size는 1 이상이어야 합니다."
+        raise ValueError(msg)
+    rows = _iter_eval_rows_from_parquet(
+        eval_parquet,
+        max_examples=max_examples,
+        parquet_batch_size=parquet_batch_size,
+    )
+    return _evaluate_generative_ranking_rows(
+        model=model,
+        item_to_index=item_to_index,
+        codec=codec,
+        rows=rows,
+        split_name=split_name,
+        cutoffs=cutoffs,
+        beam_size=beam_size,
+        device=device,
+        static_decoding_index_path=static_decoding_index_path,
+        inference_batch_size=inference_batch_size,
+    )
+
+
+def _evaluate_generative_ranking_rows(
+    *,
+    model: GenerativeRetriever,
+    item_to_index: Mapping[int, int],
+    codec: SemanticIdCodec,
+    rows: Iterable[_EvaluationRow],
+    split_name: str,
+    cutoffs: Sequence[int],
+    beam_size: int,
+    device: torch.device,
+    static_decoding_index_path: str | Path | None,
+    inference_batch_size: int,
+) -> GenerativeRankingEvaluation:
     _validate_cutoffs(cutoffs)
     if beam_size < 1:
         msg = "beam_size는 1 이상이어야 합니다."
@@ -100,49 +182,70 @@ def evaluate_generative_ranking(
     duplicate_items = 0
     started_at = perf_counter()
 
-    rows = list(eval_frame.itertuples(index=False))
-    for start in range(0, len(rows), inference_batch_size):
-        row_batch = rows[start : start + inference_batch_size]
-        histories = [coerce_item_ids(row.history_item_ids) for row in row_batch]
-        target_item_ids = [int(cast(Any, row.target_item_id)) for row in row_batch]
+    histories: list[tuple[int, ...]] = []
+    target_item_ids: list[int] = []
+    for row in rows:
+        histories.append(coerce_item_ids(row.history_item_ids))
+        target_item_ids.append(row.target_item_id)
+        if len(histories) < inference_batch_size:
+            continue
+
+        (
+            generated,
+            invalid,
+            history_filtered,
+            duplicate,
+        ) = _evaluate_generative_ranking_batch(
+            model=model,
+            decoder=decoder,
+            static_decoding_torch_index=static_decoding_torch_index,
+            codec=codec,
+            item_to_index=item_to_index,
+            histories=histories,
+            target_item_ids=target_item_ids,
+            recommendations=recommendations,
+            relevant_items=relevant_items,
+            max_k=max_k,
+            effective_beam_size=effective_beam_size,
+            device=device,
+        )
         unknown_target_examples += sum(
             1 for target_item_id in target_item_ids if not codec.has_item(target_item_id)
         )
+        generated_sequences += generated
+        invalid_sequences += invalid
+        history_filtered_items += history_filtered
+        duplicate_items += duplicate
+        histories = []
+        target_item_ids = []
 
-        if inference_batch_size == 1:
-            batch_results: tuple[GenerativeRecommendationResult, ...] = (
-                recommend_with_constrained_generation(
-                    model=model,
-                    decoder=decoder,
-                    codec=codec,
-                    history_item_ids=histories[0],
-                    item_to_index=item_to_index,
-                    k=max_k,
-                    beam_size=effective_beam_size,
-                    device=device,
-                    static_decoding_torch_index=static_decoding_torch_index,
-                ),
-            )
-        else:
-            batch_results = recommend_batch_with_constrained_generation(
-                model=model,
-                decoder=decoder,
-                codec=codec,
-                history_item_ids_batch=histories,
-                item_to_index=item_to_index,
-                k=max_k,
-                beam_size=effective_beam_size,
-                device=device,
-                static_decoding_torch_index=static_decoding_torch_index,
-            )
-
-        for target_item_id, result in zip(target_item_ids, batch_results, strict=True):
-            recommendations.append(result.item_ids)
-            relevant_items.append((target_item_id,))
-            generated_sequences += result.generated_sequences
-            invalid_sequences += result.invalid_sequences
-            history_filtered_items += result.history_filtered_items
-            duplicate_items += result.duplicate_items
+    if histories:
+        (
+            generated,
+            invalid,
+            history_filtered,
+            duplicate,
+        ) = _evaluate_generative_ranking_batch(
+            model=model,
+            decoder=decoder,
+            static_decoding_torch_index=static_decoding_torch_index,
+            codec=codec,
+            item_to_index=item_to_index,
+            histories=histories,
+            target_item_ids=target_item_ids,
+            recommendations=recommendations,
+            relevant_items=relevant_items,
+            max_k=max_k,
+            effective_beam_size=effective_beam_size,
+            device=device,
+        )
+        unknown_target_examples += sum(
+            1 for target_item_id in target_item_ids if not codec.has_item(target_item_id)
+        )
+        generated_sequences += generated
+        invalid_sequences += invalid
+        history_filtered_items += history_filtered
+        duplicate_items += duplicate
 
     elapsed_ms = (perf_counter() - started_at) * 1000
     metrics_by_k = {
@@ -163,6 +266,86 @@ def evaluate_generative_ranking(
         avg_recommendations=total_recommendations / max(num_examples, 1),
         elapsed_ms=elapsed_ms,
     )
+
+
+def _evaluate_generative_ranking_batch(
+    *,
+    model: GenerativeRetriever,
+    decoder: StaticDecodingIndex,
+    static_decoding_torch_index: StaticDecodingTorchIndex,
+    codec: SemanticIdCodec,
+    item_to_index: Mapping[int, int],
+    histories: Sequence[Sequence[int]],
+    target_item_ids: Sequence[int],
+    recommendations: list[tuple[int, ...]],
+    relevant_items: list[tuple[int]],
+    max_k: int,
+    effective_beam_size: int,
+    device: torch.device,
+) -> tuple[int, int, int, int]:
+    if len(histories) == 1:
+        batch_results: tuple[GenerativeRecommendationResult, ...] = (
+            recommend_with_constrained_generation(
+                model=model,
+                decoder=decoder,
+                codec=codec,
+                history_item_ids=histories[0],
+                item_to_index=item_to_index,
+                k=max_k,
+                beam_size=effective_beam_size,
+                device=device,
+                static_decoding_torch_index=static_decoding_torch_index,
+            ),
+        )
+    else:
+        batch_results = recommend_batch_with_constrained_generation(
+            model=model,
+            decoder=decoder,
+            codec=codec,
+            history_item_ids_batch=histories,
+            item_to_index=item_to_index,
+            k=max_k,
+            beam_size=effective_beam_size,
+            device=device,
+            static_decoding_torch_index=static_decoding_torch_index,
+        )
+
+    generated_sequences = 0
+    invalid_sequences = 0
+    history_filtered_items = 0
+    duplicate_items = 0
+    for target_item_id, result in zip(target_item_ids, batch_results, strict=True):
+        recommendations.append(result.item_ids)
+        relevant_items.append((target_item_id,))
+        generated_sequences += result.generated_sequences
+        invalid_sequences += result.invalid_sequences
+        history_filtered_items += result.history_filtered_items
+        duplicate_items += result.duplicate_items
+    return generated_sequences, invalid_sequences, history_filtered_items, duplicate_items
+
+
+def _iter_eval_rows_from_parquet(
+    eval_parquet: str | Path,
+    *,
+    max_examples: int | None,
+    parquet_batch_size: int,
+) -> Iterator[_EvaluationRow]:
+    yielded = 0
+    pq_module = cast(Any, pq)
+    parquet_file = pq_module.ParquetFile(eval_parquet)
+    for record_batch in parquet_file.iter_batches(
+        batch_size=parquet_batch_size,
+        columns=["history_item_ids", "target_item_id"],
+    ):
+        frame = record_batch.to_pandas()
+        for row in frame.itertuples(index=False):
+            yield _EvaluationRow(
+                history_item_ids=row.history_item_ids,
+                target_item_id=int(cast(Any, row.target_item_id)),
+            )
+            yielded += 1
+            if max_examples is not None and yielded >= max_examples:
+                return
 
 
 def recommend_with_constrained_generation(

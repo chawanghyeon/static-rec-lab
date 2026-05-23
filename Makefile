@@ -32,15 +32,9 @@ GENERATIVE_LR ?= 0.001
 GENERATIVE_BEAM_SIZE ?= 50
 GENERATIVE_INFERENCE_BATCH_SIZE ?= 128
 GENERATIVE_DEVICE ?= auto
-GENERATIVE_STREAMING ?= 0
 GENERATIVE_PARQUET_BATCH_SIZE ?= 65536
 GENERATIVE_LOG_EVERY_BATCHES ?= 250
 GENERATIVE_COMPILE_MODEL ?= 0
-ifneq ($(filter 1 true yes,$(GENERATIVE_STREAMING)),)
-GENERATIVE_STREAMING_CLI_ARG := --streaming
-else
-GENERATIVE_STREAMING_CLI_ARG :=
-endif
 ifneq ($(filter 1 true yes,$(GENERATIVE_COMPILE_MODEL)),)
 GENERATIVE_COMPILE_MODEL_CLI_ARG := --compile-model
 else
@@ -153,7 +147,7 @@ train-generative:
 		--max-history-length $(MAX_HISTORY_LENGTH) \
 		--device $(GENERATIVE_DEVICE) \
 		--parquet-batch-size $(GENERATIVE_PARQUET_BATCH_SIZE) \
-		--log-every-batches $(GENERATIVE_LOG_EVERY_BATCHES) $(GENERATIVE_STREAMING_CLI_ARG) $(GENERATIVE_COMPILE_MODEL_CLI_ARG)
+		--log-every-batches $(GENERATIVE_LOG_EVERY_BATCHES) $(GENERATIVE_COMPILE_MODEL_CLI_ARG)
 
 eval-generative:
 	$(UV) run python scripts/generative.py eval \
@@ -161,7 +155,8 @@ eval-generative:
 		--eval-parquet $(PROCESSED_DIR)/valid.parquet \
 		--semantic-id-path $(SEMANTIC_ID_PATH) \
 		--report-path $(GENERATIVE_REPORT) \
-		--batch-size $(GENERATIVE_BATCH_SIZE)
+		--batch-size $(GENERATIVE_BATCH_SIZE) \
+		--parquet-batch-size $(GENERATIVE_PARQUET_BATCH_SIZE)
 
 eval-generative-ranking:
 	$(UV) run python scripts/generative.py eval-ranking \
@@ -172,6 +167,7 @@ eval-generative-ranking:
 		--report-path $(GENERATIVE_RANKING_REPORT) \
 		--beam-size $(GENERATIVE_BEAM_SIZE) \
 		--inference-batch-size $(GENERATIVE_INFERENCE_BATCH_SIZE) \
+		--parquet-batch-size $(GENERATIVE_PARQUET_BATCH_SIZE) \
 		$(STATIC_DECODING_INDEX_CLI_ARG)
 
 benchmark-decoder:
@@ -222,7 +218,6 @@ generative-ml32m:
 		SEMANTIC_ID_PATH=$(ML32M_SEMANTIC_ID_PATH) \
 		GENERATIVE_CHECKPOINT=$(ML32M_GENERATIVE_CHECKPOINT) \
 		GENERATIVE_BATCH_SIZE=$(ML32M_GENERATIVE_BATCH_SIZE) \
-		GENERATIVE_STREAMING=1 \
 		GENERATIVE_PARQUET_BATCH_SIZE=$(ML32M_GENERATIVE_PARQUET_BATCH_SIZE) \
 		GENERATIVE_DEVICE=$(ML32M_DEVICE)
 	$(MAKE) eval-generative \

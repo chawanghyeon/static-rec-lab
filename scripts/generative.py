@@ -7,26 +7,21 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, cast
 
-import pandas as pd
 import torch
-from torch.utils.data import DataLoader, Dataset, IterableDataset
 
 from recsys.evaluation import (
     STATIC_DECODING_DECODER_NAME,
     GenerativeRankingEvaluation,
-    evaluate_generative_ranking,
+    evaluate_generative_ranking_from_parquet,
     write_generative_ranking_report,
 )
 from recsys.models import (
     GenerativeBatch,
-    GenerativeExample,
     GenerativeParquetBatchIterableDataset,
     GenerativeRetriever,
     GenerativeRetrieverConfig,
     GenerativeTrainingMetrics,
-    build_generative_dataset,
     build_item_index_from_codec,
-    collate_generative_examples,
     evaluate_model,
     infer_semantic_vocab_size,
     load_checkpoint,
@@ -78,11 +73,6 @@ def _add_train_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentPa
     parser.add_argument("--max-train-examples", type=int, default=None)
     parser.add_argument("--max-valid-examples", type=int, default=None)
     parser.add_argument("--max-history-length", type=int, default=50)
-    parser.add_argument(
-        "--streaming",
-        action="store_true",
-        help="대용량 parquet를 메모리에 모두 올리지 않고 batch 단위로 읽습니다.",
-    )
     parser.add_argument("--parquet-batch-size", type=int, default=65_536)
     parser.add_argument("--log-every-batches", type=int, default=250)
     parser.add_argument("--d-model", type=int, default=64)
@@ -120,6 +110,7 @@ def _add_eval_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentPar
     )
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--max-examples", type=int, default=None)
+    parser.add_argument("--parquet-batch-size", type=int, default=65_536)
     parser.add_argument("--device", choices=["auto", "cpu", "cuda", "mps"], default="auto")
 
 
@@ -163,6 +154,7 @@ def _add_eval_ranking_parser(
     )
     parser.add_argument("--max-valid-examples", type=int, default=None)
     parser.add_argument("--max-test-examples", type=int, default=None)
+    parser.add_argument("--parquet-batch-size", type=int, default=65_536)
     parser.add_argument("--device", choices=["auto", "cpu", "cuda", "mps"], default="auto")
 
 
@@ -175,69 +167,26 @@ def train_generative(args: argparse.Namespace) -> None:
     torch.manual_seed(args.random_seed)
     device = resolve_torch_device(args.device)
     codec = SemanticIdCodec.load_json(args.semantic_id_path)
-    train_loader: Iterable[GenerativeBatch]
-    valid_loader: Iterable[GenerativeBatch]
-    if args.streaming:
-        item_to_index = build_item_index_from_codec(codec)
-        train_loader = GenerativeParquetBatchIterableDataset(
-            args.train_parquet,
-            codec,
-            item_to_index=item_to_index,
-            batch_size=args.batch_size,
-            max_examples=args.max_train_examples,
-            parquet_batch_size=args.parquet_batch_size,
-        )
-        valid_loader = GenerativeParquetBatchIterableDataset(
-            args.valid_parquet,
-            codec,
-            item_to_index=item_to_index,
-            batch_size=args.batch_size,
-            max_examples=args.max_valid_examples,
-            parquet_batch_size=args.parquet_batch_size,
-        )
-        item_vocab_size = max(item_to_index.values(), default=1) + 1
-        semantic_vocab_size = infer_semantic_vocab_size(codec)
-        semantic_id_length = codec.semantic_id_length
-    else:
-        train_frame = pd.read_parquet(args.train_parquet)
-        valid_frame = pd.read_parquet(args.valid_parquet)
-        train_bundle = build_generative_dataset(
-            train_frame,
-            codec,
-            max_examples=args.max_train_examples,
-        )
-        valid_bundle = build_generative_dataset(
-            valid_frame,
-            codec,
-            item_to_index=train_bundle.item_to_index,
-            max_examples=args.max_valid_examples,
-        )
-        train_dataset: Dataset[GenerativeExample] | IterableDataset[GenerativeExample]
-        valid_dataset: Dataset[GenerativeExample] | IterableDataset[GenerativeExample]
-        train_dataset = train_bundle.dataset
-        valid_dataset = valid_bundle.dataset
-        item_to_index = train_bundle.item_to_index
-        item_vocab_size = train_bundle.item_vocab_size
-        semantic_vocab_size = train_bundle.semantic_vocab_size
-        semantic_id_length = train_bundle.semantic_id_length
-        train_loader = cast(
-            Iterable[GenerativeBatch],
-            DataLoader(
-                train_dataset,
-                batch_size=args.batch_size,
-                shuffle=True,
-                collate_fn=collate_generative_examples,
-            ),
-        )
-        valid_loader = cast(
-            Iterable[GenerativeBatch],
-            DataLoader(
-                valid_dataset,
-                batch_size=args.batch_size,
-                shuffle=False,
-                collate_fn=collate_generative_examples,
-            ),
-        )
+    item_to_index = build_item_index_from_codec(codec)
+    train_loader: Iterable[GenerativeBatch] = GenerativeParquetBatchIterableDataset(
+        args.train_parquet,
+        codec,
+        item_to_index=item_to_index,
+        batch_size=args.batch_size,
+        max_examples=args.max_train_examples,
+        parquet_batch_size=args.parquet_batch_size,
+    )
+    valid_loader: Iterable[GenerativeBatch] = GenerativeParquetBatchIterableDataset(
+        args.valid_parquet,
+        codec,
+        item_to_index=item_to_index,
+        batch_size=args.batch_size,
+        max_examples=args.max_valid_examples,
+        parquet_batch_size=args.parquet_batch_size,
+    )
+    item_vocab_size = max(item_to_index.values(), default=1) + 1
+    semantic_vocab_size = infer_semantic_vocab_size(codec)
+    semantic_id_length = codec.semantic_id_length
 
     model = GenerativeRetriever(
         GenerativeRetrieverConfig(
@@ -306,21 +255,13 @@ def eval_generative(args: argparse.Namespace) -> None:
     device = resolve_torch_device(args.device)
     model, item_to_index = load_checkpoint(args.checkpoint_path, device=device)
     codec = SemanticIdCodec.load_json(args.semantic_id_path)
-    eval_frame = pd.read_parquet(args.eval_parquet)
-    bundle = build_generative_dataset(
-        eval_frame,
+    dataloader: Iterable[GenerativeBatch] = GenerativeParquetBatchIterableDataset(
+        args.eval_parquet,
         codec,
         item_to_index=item_to_index,
+        batch_size=args.batch_size,
         max_examples=args.max_examples,
-    )
-    dataloader = cast(
-        Iterable[GenerativeBatch],
-        DataLoader(
-            bundle.dataset,
-            batch_size=args.batch_size,
-            shuffle=False,
-            collate_fn=collate_generative_examples,
-        ),
+        parquet_batch_size=args.parquet_batch_size,
     )
     metrics = evaluate_model(model, dataloader, device=device)
     report_path = _write_report(args.report_path, metrics, args.eval_parquet)
@@ -342,33 +283,35 @@ def eval_generative_ranking(args: argparse.Namespace) -> None:
     device = resolve_torch_device(args.device)
     model, item_to_index = load_checkpoint(args.checkpoint_path, device=device)
     codec = SemanticIdCodec.load_json(args.semantic_id_path)
-    valid_frame = _read_eval_frame(args.valid_parquet, args.max_valid_examples)
-    test_frame = _read_eval_frame(args.test_parquet, args.max_test_examples)
 
     evaluations = [
-        evaluate_generative_ranking(
+        evaluate_generative_ranking_from_parquet(
             model=model,
             item_to_index=item_to_index,
             codec=codec,
-            eval_frame=valid_frame,
+            eval_parquet=args.valid_parquet,
             split_name="valid",
             cutoffs=args.cutoffs,
             beam_size=args.beam_size,
             device=device,
             static_decoding_index_path=args.static_decoding_index_path,
             inference_batch_size=args.inference_batch_size,
+            max_examples=args.max_valid_examples,
+            parquet_batch_size=args.parquet_batch_size,
         ),
-        evaluate_generative_ranking(
+        evaluate_generative_ranking_from_parquet(
             model=model,
             item_to_index=item_to_index,
             codec=codec,
-            eval_frame=test_frame,
+            eval_parquet=args.test_parquet,
             split_name="test",
             cutoffs=args.cutoffs,
             beam_size=args.beam_size,
             device=device,
             static_decoding_index_path=args.static_decoding_index_path,
             inference_batch_size=args.inference_batch_size,
+            max_examples=args.max_test_examples,
+            parquet_batch_size=args.parquet_batch_size,
         ),
     ]
     report_path = write_generative_ranking_report(
@@ -412,15 +355,6 @@ def _write_report(
         encoding="utf-8",
     )
     return output_path
-
-
-def _read_eval_frame(path: Path, max_examples: int | None) -> pd.DataFrame:
-    if max_examples is not None and max_examples < 1:
-        raise ValueError("max examples는 None이거나 1 이상이어야 합니다.")
-    frame = pd.read_parquet(path)
-    if max_examples is None:
-        return frame
-    return frame.head(max_examples)
 
 
 def _print_evaluation(evaluation: GenerativeRankingEvaluation) -> None:
