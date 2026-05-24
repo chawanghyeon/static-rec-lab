@@ -41,6 +41,15 @@ def model_config(tmp_path_factory: pytest.TempPathFactory) -> ModelRecommendatio
             "target_timestamp": [1, 1, 2],
         }
     ).to_parquet(history_path, index=False)
+    movie_path = tmp_path / "movies.csv"
+    movie_ids = list(range(1000, 1128))
+    pd.DataFrame(
+        {
+            "movieId": movie_ids,
+            "title": [f"Movie {item_id}" for item_id in movie_ids],
+            "genres": ["Drama"] * len(movie_ids),
+        }
+    ).to_csv(movie_path, index=False)
 
     item_to_index = build_item_index_from_codec(codec)
     model = GenerativeRetriever(
@@ -72,6 +81,7 @@ def model_config(tmp_path_factory: pytest.TempPathFactory) -> ModelRecommendatio
         checkpoint_path=checkpoint_path,
         semantic_id_path=semantic_id_path,
         user_history_path=history_path,
+        movie_metadata_path=movie_path,
         device="cpu",
         beam_size=128,
         static_decoding_index_path=static_decoding_index_path,
@@ -105,7 +115,8 @@ def test_get_user_recommendations_returns_model_items(client: TestClient) -> Non
     for item in payload["items"]:
         assert set(item) == {"item_id", "title", "semantic_id", "score"}
         assert isinstance(item["item_id"], int)
-        assert item["title"] == f"Item {item['item_id']}"
+        assert item["item_id"] not in {1000, 1001}
+        assert item["title"] == f"Movie {item['item_id']}"
         assert len(item["semantic_id"]) == 2
         assert 0 <= item["score"] <= 1
 
@@ -147,6 +158,7 @@ def test_build_default_service_rejects_missing_artifacts(
             checkpoint_path=tmp_path / "model.pt",
             semantic_id_path=tmp_path / "semantic_ids.json",
             user_history_path=tmp_path / "valid.parquet",
+            movie_metadata_path=tmp_path / "movies.csv",
             device="cpu",
             beam_size=20,
             static_decoding_index_path=tmp_path / "static_decoding_index.npz",
@@ -168,6 +180,7 @@ def test_app_startup_rejects_missing_default_artifacts(
             checkpoint_path=tmp_path / "model.pt",
             semantic_id_path=tmp_path / "semantic_ids.json",
             user_history_path=tmp_path / "valid.parquet",
+            movie_metadata_path=tmp_path / "movies.csv",
             device="cpu",
             beam_size=20,
             static_decoding_index_path=tmp_path / "static_decoding_index.npz",

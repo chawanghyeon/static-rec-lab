@@ -485,10 +485,13 @@ artifacts/generative/ml-32m/model.pt
 artifacts/semantic_id/ml-32m/semantic_ids.json
 artifacts/semantic_id/ml-32m/static_decoding_index.npz
 data/processed/ml-32m/valid.parquet
+data/raw/ml-32m/movies.csv
 ```
 
 API serving은 `static_decoding` 기반 STATIC decoder를 사용합니다.
-static_decoding `build_static_index` 산출물 `.npz`를 직접 로드합니다.
+static_decoding `build_static_index` 산출물 `.npz`를 직접 로드하고,
+응답 item title은 MovieLens `movies.csv` metadata에서 조회합니다.
+사용자의 입력 history에 이미 포함된 item은 추천 응답에서 제외합니다.
 
 Endpoint:
 

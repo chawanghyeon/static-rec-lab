@@ -9,6 +9,7 @@ from apps.api.services.model_recommender import (
     ModelRecommendationConfig,
     ModelRecommendationService,
     UserHistory,
+    load_movie_titles,
     load_user_histories,
 )
 
@@ -20,6 +21,7 @@ __all__ = [
     "RecommendedItem",
     "UserHistory",
     "build_default_recommendation_service",
+    "load_movie_titles",
     "load_user_histories",
 ]
 
@@ -28,6 +30,7 @@ DEFAULT_MODEL_CONFIG = ModelRecommendationConfig(
     checkpoint_path=Path("artifacts/generative/ml-32m/model.pt"),
     semantic_id_path=Path("artifacts/semantic_id/ml-32m/semantic_ids.json"),
     user_history_path=Path("data/processed/ml-32m/valid.parquet"),
+    movie_metadata_path=Path("data/raw/ml-32m/movies.csv"),
     device="cpu",
     beam_size=20,
     static_decoding_index_path=Path("artifacts/semantic_id/ml-32m/static_decoding_index.npz"),
@@ -45,6 +48,7 @@ def _validate_model_config_paths(config: ModelRecommendationConfig) -> None:
         "checkpoint_path": config.checkpoint_path,
         "semantic_id_path": config.semantic_id_path,
         "user_history_path": config.user_history_path,
+        "movie_metadata_path": config.movie_metadata_path,
     }
     if config.static_decoding_index_path is not None:
         missing_paths["static_decoding_index_path"] = config.static_decoding_index_path

@@ -33,6 +33,7 @@ class ModelRecommendationConfig:
     checkpoint_path: Path
     semantic_id_path: Path
     user_history_path: Path
+    movie_metadata_path: Path
     device: str = "cpu"
     beam_size: int = 50
     static_decoding_index_path: Path | None = None
@@ -58,6 +59,7 @@ class ModelRecommendationService:
         item_to_index: Mapping[int, int],
         codec: SemanticIdCodec,
         user_histories: Mapping[int, UserHistory],
+        movie_titles: Mapping[int, str],
         device: torch.device,
         beam_size: int = 50,
         static_decoding_index_path: Path | None = None,
@@ -77,6 +79,8 @@ class ModelRecommendationService:
         self._user_histories = {
             int(user_id): history for user_id, history in user_histories.items()
         }
+        self._movie_titles = dict(movie_titles)
+        _validate_movie_titles(codec=codec, movie_titles=self._movie_titles)
         self._beam_size = beam_size
 
     @classmethod
@@ -86,11 +90,13 @@ class ModelRecommendationService:
         model, item_to_index = load_checkpoint(config.checkpoint_path, device=device)
         codec = SemanticIdCodec.load_json(config.semantic_id_path)
         user_histories = load_user_histories(config.user_history_path)
+        movie_titles = load_movie_titles(config.movie_metadata_path)
         return cls(
             model=model,
             item_to_index=item_to_index,
             codec=codec,
             user_histories=user_histories,
+            movie_titles=movie_titles,
             device=device,
             beam_size=config.beam_size,
             static_decoding_index_path=config.static_decoding_index_path,
@@ -103,6 +109,8 @@ class ModelRecommendationService:
             raise ValueError(msg)
 
         history = self._user_histories.get(user_id, UserHistory(item_ids=(), feedback_ids=()))
+        history_item_ids = set(history.item_ids)
+        result_limit = max(self._beam_size, k + len(history_item_ids))
         beam_results = generate_semantic_ids_with_static_decoding(
             model=self._model,
             index=self._static_decoding_index,
@@ -110,8 +118,8 @@ class ModelRecommendationService:
             history_item_ids=history.item_ids,
             history_feedback_ids=history.feedback_ids,
             item_to_index=self._item_to_index,
-            beam_size=max(self._beam_size, k),
-            max_results=k,
+            beam_size=result_limit,
+            max_results=result_limit,
             device=self._device,
         )
         recommendations: list[RecommendedItem] = []
@@ -121,12 +129,12 @@ class ModelRecommendationService:
                 item_id = self._codec.decode_semantic_id(result.semantic_id)
             except UnknownSemanticIdError:
                 continue
-            if item_id in seen_items:
+            if item_id in history_item_ids or item_id in seen_items:
                 continue
             recommendations.append(
                 RecommendedItem(
                     item_id=item_id,
-                    title=f"Item {item_id}",
+                    title=self._movie_titles[item_id],
                     semantic_id=result.semantic_id,
                     score=round(result.score, 6),
                 )
@@ -159,3 +167,34 @@ def load_user_histories(path: str | Path) -> dict[int, UserHistory]:
             raise ValueError(msg)
         histories[user_id] = UserHistory(item_ids=item_ids, feedback_ids=feedback_ids)
     return histories
+
+
+def load_movie_titles(path: str | Path) -> dict[int, str]:
+    """MovieLens movies.csv에서 movieId별 title을 로드한다."""
+    frame = pd.read_csv(path)
+    required_columns = {"movieId", "title"}
+    missing_columns = sorted(required_columns - set(frame.columns))
+    if missing_columns:
+        msg = f"MovieLens metadata에 필요한 컬럼이 없습니다: {missing_columns}"
+        raise ValueError(msg)
+
+    titles: dict[int, str] = {}
+    for row in frame.itertuples(index=False):
+        movie_id = int(cast(Any, row.movieId))
+        title = str(cast(Any, row.title))
+        titles[movie_id] = title
+    return titles
+
+
+def _validate_movie_titles(
+    *,
+    codec: SemanticIdCodec,
+    movie_titles: Mapping[int, str],
+) -> None:
+    missing_item_ids = sorted(set(codec.item_to_semantic_id) - set(movie_titles))
+    if missing_item_ids:
+        sample = missing_item_ids[:10]
+        msg = (
+            f"semantic ID artifact에 있지만 MovieLens metadata에 없는 item_id가 있습니다: {sample}"
+        )
+        raise ValueError(msg)
