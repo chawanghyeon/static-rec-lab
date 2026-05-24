@@ -80,9 +80,8 @@ constraint index와 sparse candidate gather는 `static_decoding` package 함수�
 - `make lint`
 - `make test`
 - `make build-static-decoding-index`
-- `make benchmark-decoder`
 
-테스트와 benchmark는 다음을 검증합니다.
+테스트와 선택 benchmark는 다음을 검증합니다.
 
 - `static_decoding` index가 Semantic ID codec의 모든 ID를 포함하는지
 - PyTorch sparse candidate gather가 index의 allowed token과 일치하는지

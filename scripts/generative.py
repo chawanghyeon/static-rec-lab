@@ -22,7 +22,9 @@ from recsys.models import (
     GenerativeRetriever,
     GenerativeRetrieverConfig,
     GenerativeTrainingMetrics,
-    build_item_index_from_codec,
+    TargetCoverage,
+    build_item_index_from_parquet,
+    compute_target_coverage_from_parquet,
     evaluate_model,
     infer_semantic_vocab_size,
     load_checkpoint,
@@ -220,7 +222,17 @@ def train_generative(args: argparse.Namespace) -> None:
     torch.manual_seed(args.random_seed)
     device = resolve_torch_device(args.device)
     codec = SemanticIdCodec.load_json(args.semantic_id_path)
-    item_to_index = build_item_index_from_codec(codec)
+    item_to_index = build_item_index_from_parquet(
+        args.train_parquet,
+        codec=codec,
+        parquet_batch_size=args.parquet_batch_size,
+    )
+    valid_target_coverage = compute_target_coverage_from_parquet(
+        args.valid_parquet,
+        codec,
+        max_known_examples=args.max_valid_examples,
+        parquet_batch_size=args.parquet_batch_size,
+    )
     train_dataset = GenerativeParquetBatchIterableDataset(
         args.train_parquet,
         codec,
@@ -322,6 +334,8 @@ def train_generative(args: argparse.Namespace) -> None:
     print("Generative retrieval 학습 완료")
     print(f"- train_examples: {train_metrics.num_examples if train_metrics is not None else 0}")
     print(f"- valid_examples: {valid_metrics.num_examples}")
+    print(f"- valid_rows_scanned: {valid_target_coverage.total_examples}")
+    print(f"- valid_skipped_unknown_targets: {valid_target_coverage.unknown_target_examples}")
     print(f"- item_vocab_size: {item_vocab_size}")
     print(f"- semantic_vocab_size: {semantic_vocab_size}")
     print(f"- checkpoint: {checkpoint_path}")
@@ -336,6 +350,12 @@ def eval_generative(args: argparse.Namespace) -> None:
     amp_dtype = _resolve_amp_dtype(args.amp_dtype)
     model, item_to_index = load_checkpoint(args.checkpoint_path, device=device)
     codec = SemanticIdCodec.load_json(args.semantic_id_path)
+    target_coverage = compute_target_coverage_from_parquet(
+        args.eval_parquet,
+        codec,
+        max_known_examples=args.max_examples,
+        parquet_batch_size=args.parquet_batch_size,
+    )
     dataset = GenerativeParquetBatchIterableDataset(
         args.eval_parquet,
         codec,
@@ -358,10 +378,12 @@ def eval_generative(args: argparse.Namespace) -> None:
         use_amp=args.amp,
         amp_dtype=amp_dtype,
     )
-    report_path = _write_report(args.report_path, metrics, args.eval_parquet)
+    report_path = _write_report(args.report_path, metrics, args.eval_parquet, target_coverage)
 
     print("Generative retrieval 평가 완료")
-    print(f"- examples: {metrics.num_examples}")
+    print(f"- evaluated_examples: {metrics.num_examples}")
+    print(f"- parquet_rows_scanned: {target_coverage.total_examples}")
+    print(f"- skipped_unknown_targets: {target_coverage.unknown_target_examples}")
     print(f"- loss: {metrics.loss:.6f}")
     print(f"- token_accuracy: {metrics.token_accuracy:.6f}")
     print(f"- sequence_accuracy: {metrics.sequence_accuracy:.6f}")
@@ -430,6 +452,7 @@ def _write_report(
     path: Path,
     metrics: GenerativeTrainingMetrics,
     eval_parquet: Path,
+    target_coverage: TargetCoverage,
 ) -> Path:
     output_path = Path(path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -439,7 +462,10 @@ def _write_report(
                 "# Generative Retrieval 평가 리포트",
                 "",
                 f"- 평가 데이터: `{eval_parquet}`",
-                f"- examples: {metrics.num_examples:,}",
+                f"- parquet rows scanned: {target_coverage.total_examples:,}",
+                f"- evaluated examples: {metrics.num_examples:,}",
+                f"- skipped unknown targets: {target_coverage.unknown_target_examples:,}",
+                f"- unknown target rate: {target_coverage.unknown_target_rate:.6f}",
                 f"- validation loss: {metrics.loss:.6f}",
                 f"- token accuracy: {metrics.token_accuracy:.6f}",
                 f"- sequence accuracy: {metrics.sequence_accuracy:.6f}",

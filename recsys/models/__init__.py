@@ -8,7 +8,10 @@ from recsys.models.dataset import (
     UNK_ITEM_INDEX,
     GenerativeBatch,
     GenerativeParquetBatchIterableDataset,
+    TargetCoverage,
     build_item_index_from_codec,
+    build_item_index_from_parquet,
+    compute_target_coverage_from_parquet,
     infer_semantic_vocab_size,
 )
 from recsys.models.device import resolve_torch_device
@@ -37,7 +40,10 @@ __all__ = [
     "GenerativeRetriever",
     "GenerativeRetrieverConfig",
     "GenerativeTrainingMetrics",
+    "TargetCoverage",
     "build_item_index_from_codec",
+    "build_item_index_from_parquet",
+    "compute_target_coverage_from_parquet",
     "evaluate_model",
     "generate_semantic_ids_batch_with_static_decoding",
     "generate_semantic_ids_with_static_decoding",

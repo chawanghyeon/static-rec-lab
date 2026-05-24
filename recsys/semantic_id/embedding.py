@@ -74,7 +74,7 @@ def build_item_interaction_embeddings(
             [int(item_id) for item_id in chunk["target_item_id"].tolist()],
             dtype=np.int64,
         )
-        history_values = cast(Iterable[Any], chunk["history_item_ids"].tolist())
+        history_values = cast(Iterable[Any], chunk["positive_history_item_ids"].tolist())
         sources, parent_indices = _flatten_history_lists(
             history_values,
             config.max_history_items,
@@ -99,11 +99,11 @@ def build_item_interaction_embeddings_from_parquet(
     state = _EmbeddingBuildState.create(item_ids, config)
     for batch in parquet_file.iter_batches(  # type: ignore[no-untyped-call]
         batch_size=config.batch_size,
-        columns=["history_item_ids", "target_item_id"],
+        columns=["positive_history_item_ids", "target_item_id"],
     ):
         target_item_ids = _arrow_int_array_to_numpy(batch.column("target_item_id"))
         sources, parent_indices = _flatten_arrow_history_array(
-            batch.column("history_item_ids"),
+            batch.column("positive_history_item_ids"),
             config.max_history_items,
         )
         state.update(target_item_ids, sources, parent_indices)
@@ -212,7 +212,7 @@ def _collect_item_ids_from_frame(train_frame: pd.DataFrame) -> tuple[int, ...]:
         int(item_id)
         for item_id in cast(Iterable[Any], train_frame["target_item_id"].unique().tolist())
     }
-    for history_item_ids in cast(Iterable[Any], train_frame["history_item_ids"].tolist()):
+    for history_item_ids in cast(Iterable[Any], train_frame["positive_history_item_ids"].tolist()):
         item_ids.update(coerce_item_ids(history_item_ids))
     return tuple(sorted(item_ids))
 
@@ -224,12 +224,12 @@ def _collect_item_ids_from_parquet(
     item_ids: set[int] = set()
     for batch in parquet_file.iter_batches(  # type: ignore[no-untyped-call]
         batch_size=batch_size,
-        columns=["history_item_ids", "target_item_id"],
+        columns=["positive_history_item_ids", "target_item_id"],
     ):
         target_item_ids = _arrow_int_array_to_numpy(batch.column("target_item_id"))
         item_ids.update(int(item_id) for item_id in np.unique(target_item_ids).tolist())
 
-        history_values = _arrow_list_values_to_numpy(batch.column("history_item_ids"))
+        history_values = _arrow_list_values_to_numpy(batch.column("positive_history_item_ids"))
         if len(history_values) > 0:
             item_ids.update(int(item_id) for item_id in np.unique(history_values).tolist())
     return tuple(sorted(item_ids))
@@ -281,7 +281,7 @@ def _arrow_offsets_to_numpy(array: pa.Array) -> np.ndarray:
     if isinstance(array, pa.ChunkedArray):
         array = array.combine_chunks()
     if not isinstance(array, pa.ListArray | pa.LargeListArray):
-        msg = "history_item_ids는 list array여야 합니다."
+        msg = "positive_history_item_ids는 list array여야 합니다."
         raise ValueError(msg)
     return np.asarray(array.offsets.to_numpy(zero_copy_only=False), dtype=np.int64)
 
@@ -290,7 +290,7 @@ def _arrow_list_values_to_numpy(array: pa.Array) -> np.ndarray:
     if isinstance(array, pa.ChunkedArray):
         array = array.combine_chunks()
     if not isinstance(array, pa.ListArray | pa.LargeListArray):
-        msg = "history_item_ids는 list array여야 합니다."
+        msg = "positive_history_item_ids는 list array여야 합니다."
         raise ValueError(msg)
     return np.asarray(array.values.to_numpy(zero_copy_only=False), dtype=np.int64)
 
@@ -336,7 +336,7 @@ def _normalized_item_order(num_items: int) -> np.ndarray:
 
 
 def _validate_train_frame(train_frame: pd.DataFrame) -> None:
-    required_columns = {"history_item_ids", "target_item_id"}
+    required_columns = {"positive_history_item_ids", "target_item_id"}
     missing_columns = sorted(required_columns - set(train_frame.columns))
     if missing_columns:
         msg = f"train 데이터에 필요한 컬럼이 없습니다: {missing_columns}"
@@ -345,7 +345,7 @@ def _validate_train_frame(train_frame: pd.DataFrame) -> None:
 
 def _validate_parquet_schema(parquet_file: pq.ParquetFile) -> None:
     schema_names = set(parquet_file.schema_arrow.names)
-    required_columns = {"history_item_ids", "target_item_id"}
+    required_columns = {"positive_history_item_ids", "target_item_id"}
     missing_columns = sorted(required_columns - schema_names)
     if missing_columns:
         msg = f"train parquet에 필요한 컬럼이 없습니다: {missing_columns}"

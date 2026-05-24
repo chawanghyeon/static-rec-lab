@@ -7,6 +7,7 @@ from collections.abc import Mapping, Sequence
 
 import torch
 
+from recsys.data import POSITIVE_FEEDBACK_ID
 from recsys.decoding import (
     BeamSearchResult,
     StaticDecodingIndex,
@@ -30,6 +31,7 @@ def generate_semantic_ids_with_static_decoding(
     index: StaticDecodingIndex,
     torch_index: StaticDecodingTorchIndex | None = None,
     history_item_ids: Sequence[int],
+    history_feedback_ids: Sequence[int] | None = None,
     item_to_index: Mapping[int, int],
     beam_size: int,
     max_results: int,
@@ -50,8 +52,9 @@ def generate_semantic_ids_with_static_decoding(
         raise ValueError(msg)
 
     model.eval()
-    history_item_tensor, history_padding_mask = _build_history_tensors(
+    history_item_tensor, history_feedback_tensor, history_padding_mask = _build_history_tensors(
         history_item_ids=history_item_ids,
+        history_feedback_ids=history_feedback_ids,
         item_to_index=item_to_index,
         max_history_length=model.config.max_history_length,
         device=device,
@@ -83,6 +86,7 @@ def generate_semantic_ids_with_static_decoding(
 
         logits = model(
             history_item_tensor.expand(batch_size, -1),
+            history_feedback_tensor.expand(batch_size, -1),
             history_padding_mask.expand(batch_size, -1),
             decoder_input_ids,
         )
@@ -105,6 +109,7 @@ def generate_semantic_ids_batch_with_static_decoding(
     index: StaticDecodingIndex,
     torch_index: StaticDecodingTorchIndex | None = None,
     history_item_ids_batch: Sequence[Sequence[int]],
+    history_feedback_ids_batch: Sequence[Sequence[int]] | None = None,
     item_to_index: Mapping[int, int],
     beam_size: int,
     max_results: int,
@@ -135,11 +140,14 @@ def generate_semantic_ids_batch_with_static_decoding(
         )
         raise ValueError(msg)
 
-    history_item_tensor, history_padding_mask = _build_history_tensors_batch(
-        history_item_ids_batch=history_item_ids_batch,
-        item_to_index=item_to_index,
-        max_history_length=model.config.max_history_length,
-        device=device,
+    history_item_tensor, history_feedback_tensor, history_padding_mask = (
+        _build_history_tensors_batch(
+            history_item_ids_batch=history_item_ids_batch,
+            history_feedback_ids_batch=history_feedback_ids_batch,
+            item_to_index=item_to_index,
+            max_history_length=model.config.max_history_length,
+            device=device,
+        )
     )
     batch_size = int(history_item_tensor.shape[0])
     depth = index.semantic_id_depth
@@ -152,7 +160,12 @@ def generate_semantic_ids_batch_with_static_decoding(
         device=device,
     )
     decoder_input_ids[:, 0] = BOS_TOKEN_ID
-    logits = model(history_item_tensor, history_padding_mask, decoder_input_ids)
+    logits = model(
+        history_item_tensor,
+        history_feedback_tensor,
+        history_padding_mask,
+        decoder_input_ids,
+    )
     initial_logprobs = torch.log_softmax(
         _extract_raw_semantic_logits_tensor(logits[:, 0, :], index.vocab_size),
         dim=-1,
@@ -190,8 +203,14 @@ def generate_semantic_ids_batch_with_static_decoding(
         decoder_input_ids[:, 1 : 1 + prefix_length] = prefix_tokens + SEMANTIC_TOKEN_OFFSET
 
         expanded_history = history_item_tensor.repeat_interleave(beam_count, dim=0)
+        expanded_feedback = history_feedback_tensor.repeat_interleave(beam_count, dim=0)
         expanded_padding_mask = history_padding_mask.repeat_interleave(beam_count, dim=0)
-        logits = model(expanded_history, expanded_padding_mask, decoder_input_ids)
+        logits = model(
+            expanded_history,
+            expanded_feedback,
+            expanded_padding_mask,
+            decoder_input_ids,
+        )
         logprobs = torch.log_softmax(
             _extract_raw_semantic_logits_tensor(logits[:, prefix_length, :], index.vocab_size),
             dim=-1,
@@ -265,39 +284,63 @@ def generate_semantic_ids_batch_with_static_decoding(
 def _build_history_tensors(
     *,
     history_item_ids: Sequence[int],
+    history_feedback_ids: Sequence[int] | None,
     item_to_index: Mapping[int, int],
     max_history_length: int,
     device: torch.device,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    history = tuple(history_item_ids)[-max_history_length:]
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    history, feedback = _normalize_history_with_feedback(
+        history_item_ids,
+        history_feedback_ids,
+        max_history_length=max_history_length,
+    )
     if not history:
         history_indices: tuple[int, ...] = (UNK_ITEM_INDEX,)
+        feedback = (POSITIVE_FEEDBACK_ID,)
     else:
         history_indices = tuple(
             item_to_index.get(int(item_id), UNK_ITEM_INDEX) for item_id in history
         )
 
     history_tensor = torch.tensor([history_indices], dtype=torch.long, device=device)
+    feedback_tensor = torch.tensor([feedback], dtype=torch.long, device=device)
     padding_mask = torch.zeros(history_tensor.shape, dtype=torch.bool, device=device)
-    return history_tensor, padding_mask
+    return history_tensor, feedback_tensor, padding_mask
 
 
 def _build_history_tensors_batch(
     *,
     history_item_ids_batch: Sequence[Sequence[int]],
+    history_feedback_ids_batch: Sequence[Sequence[int]] | None,
     item_to_index: Mapping[int, int],
     max_history_length: int,
     device: torch.device,
-) -> tuple[torch.Tensor, torch.Tensor]:
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     histories: list[tuple[int, ...]] = []
-    for history_item_ids in history_item_ids_batch:
-        history = tuple(history_item_ids)[-max_history_length:]
+    feedback_histories: list[tuple[int, ...]] = []
+    if history_feedback_ids_batch is not None and len(history_item_ids_batch) != len(
+        history_feedback_ids_batch
+    ):
+        msg = "history_item_ids_batch와 history_feedback_ids_batch 길이가 같아야 합니다."
+        raise ValueError(msg)
+
+    for row_index, history_item_ids in enumerate(history_item_ids_batch):
+        feedback_ids = (
+            None if history_feedback_ids_batch is None else history_feedback_ids_batch[row_index]
+        )
+        history, feedback = _normalize_history_with_feedback(
+            history_item_ids,
+            feedback_ids,
+            max_history_length=max_history_length,
+        )
         if not history:
             histories.append((UNK_ITEM_INDEX,))
+            feedback_histories.append((POSITIVE_FEEDBACK_ID,))
         else:
             histories.append(
                 tuple(item_to_index.get(int(item_id), UNK_ITEM_INDEX) for item_id in history)
             )
+            feedback_histories.append(feedback)
     padded_length = max(len(history) for history in histories)
     history_tensor = torch.full(
         (len(histories), padded_length),
@@ -305,15 +348,40 @@ def _build_history_tensors_batch(
         dtype=torch.long,
         device=device,
     )
+    feedback_tensor = torch.zeros_like(history_tensor)
     padding_mask = torch.ones(history_tensor.shape, dtype=torch.bool, device=device)
-    for row_index, history in enumerate(histories):
+    for row_index, (history, feedback) in enumerate(
+        zip(histories, feedback_histories, strict=True)
+    ):
         history_tensor[row_index, : len(history)] = torch.tensor(
             history,
             dtype=torch.long,
             device=device,
         )
+        feedback_tensor[row_index, : len(feedback)] = torch.tensor(
+            feedback,
+            dtype=torch.long,
+            device=device,
+        )
         padding_mask[row_index, : len(history)] = False
-    return history_tensor, padding_mask
+    return history_tensor, feedback_tensor, padding_mask
+
+
+def _normalize_history_with_feedback(
+    history_item_ids: Sequence[int],
+    history_feedback_ids: Sequence[int] | None,
+    *,
+    max_history_length: int,
+) -> tuple[tuple[int, ...], tuple[int, ...]]:
+    history = tuple(int(item_id) for item_id in history_item_ids)
+    if history_feedback_ids is None:
+        feedback = tuple(POSITIVE_FEEDBACK_ID for _ in history)
+    else:
+        feedback = tuple(int(feedback_id) for feedback_id in history_feedback_ids)
+    if len(history) != len(feedback):
+        msg = "history_item_ids와 history_feedback_ids 길이가 같아야 합니다."
+        raise ValueError(msg)
+    return history[-max_history_length:], feedback[-max_history_length:]
 
 
 def _dense_candidates(

@@ -8,6 +8,7 @@ from typing import cast
 import torch
 from torch import nn
 
+from recsys.data import FEEDBACK_VOCAB_SIZE, PAD_FEEDBACK_ID
 from recsys.models.dataset import BOS_TOKEN_ID, PAD_ITEM_INDEX, PAD_TOKEN_ID
 
 
@@ -25,7 +26,9 @@ class GenerativeRetrieverConfig:
     num_decoder_layers: int = 2
     dim_feedforward: int = 128
     dropout: float = 0.1
+    feedback_vocab_size: int = FEEDBACK_VOCAB_SIZE
     pad_item_index: int = PAD_ITEM_INDEX
+    pad_feedback_id: int = PAD_FEEDBACK_ID
     pad_token_id: int = PAD_TOKEN_ID
     bos_token_id: int = BOS_TOKEN_ID
 
@@ -45,6 +48,11 @@ class GenerativeRetriever(nn.Module):
             config.item_vocab_size,
             config.d_model,
             padding_idx=config.pad_item_index,
+        )
+        self.feedback_embedding = nn.Embedding(
+            config.feedback_vocab_size,
+            config.d_model,
+            padding_idx=config.pad_feedback_id,
         )
         self.token_embedding = nn.Embedding(
             config.semantic_vocab_size,
@@ -102,6 +110,7 @@ class GenerativeRetriever(nn.Module):
     def forward(
         self,
         history_item_ids: torch.Tensor,
+        history_feedback_ids: torch.Tensor,
         history_padding_mask: torch.Tensor,
         decoder_input_ids: torch.Tensor,
     ) -> torch.Tensor:
@@ -112,8 +121,14 @@ class GenerativeRetriever(nn.Module):
         if decoder_input_ids.ndim != 2:
             msg = "decoder_input_ids는 [batch, target_length] tensor여야 합니다."
             raise ValueError(msg)
+        if history_feedback_ids.ndim != 2:
+            msg = "history_feedback_ids는 [batch, history_length] tensor여야 합니다."
+            raise ValueError(msg)
         if history_item_ids.shape != history_padding_mask.shape:
             msg = "history_item_ids와 history_padding_mask shape가 같아야 합니다."
+            raise ValueError(msg)
+        if history_item_ids.shape != history_feedback_ids.shape:
+            msg = "history_item_ids와 history_feedback_ids shape가 같아야 합니다."
             raise ValueError(msg)
         history_length = history_item_ids.shape[1]
         target_length = decoder_input_ids.shape[1]
@@ -132,8 +147,10 @@ class GenerativeRetriever(nn.Module):
 
         history_positions = cast(torch.Tensor, self._history_position_ids)[:, :history_length]
         target_positions = cast(torch.Tensor, self._target_position_ids)[:, :target_length]
-        src = self.item_embedding(history_item_ids) + self.history_position_embedding(
-            history_positions
+        src = (
+            self.item_embedding(history_item_ids)
+            + self.feedback_embedding(history_feedback_ids)
+            + self.history_position_embedding(history_positions)
         )
         tgt = self.token_embedding(decoder_input_ids) + self.target_position_embedding(
             target_positions
@@ -159,6 +176,9 @@ def _validate_config(config: GenerativeRetrieverConfig) -> None:
         raise ValueError(msg)
     if config.semantic_vocab_size <= max(config.pad_token_id, config.bos_token_id):
         msg = "semantic_vocab_size가 special token id보다 커야 합니다."
+        raise ValueError(msg)
+    if config.feedback_vocab_size <= config.pad_feedback_id:
+        msg = "feedback_vocab_size가 pad_feedback_id보다 커야 합니다."
         raise ValueError(msg)
     if config.semantic_id_length < 1:
         msg = "semantic_id_length는 1 이상이어야 합니다."

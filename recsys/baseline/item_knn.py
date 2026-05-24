@@ -53,9 +53,9 @@ def fit_item_knn_model(
     popularity_rank = {item.item_id: item.rank for item in popularity_model.items}
     counts: dict[int, dict[int, int]] = defaultdict(lambda: defaultdict(int))
 
-    for record in train_frame[["history_item_ids", "target_item_id"]].to_dict("records"):
+    for record in train_frame[["positive_history_item_ids", "target_item_id"]].to_dict("records"):
         target_item_id = int(record["target_item_id"])
-        history_item_ids = coerce_item_ids(record["history_item_ids"])[-max_history_items:]
+        history_item_ids = coerce_item_ids(record["positive_history_item_ids"])[-max_history_items:]
         for source_item_id in set(history_item_ids):
             if source_item_id == target_item_id:
                 continue
@@ -162,13 +162,16 @@ def evaluate_item_knn_model(
     cutoffs: Sequence[int],
 ) -> dict[int, RankingMetrics]:
     """평가 split에 대해 item KNN model의 ranking metric을 계산한다."""
-    if "history_item_ids" not in eval_frame.columns or "target_item_id" not in eval_frame.columns:
-        msg = "eval 데이터에 history_item_ids와 target_item_id 컬럼이 필요합니다."
+    if (
+        "positive_history_item_ids" not in eval_frame.columns
+        or "target_item_id" not in eval_frame.columns
+    ):
+        msg = "eval 데이터에 positive_history_item_ids와 target_item_id 컬럼이 필요합니다."
         raise ValueError(msg)
 
     max_k = max(cutoffs)
     recommendations = [
-        model.recommend(coerce_item_ids(row.history_item_ids), max_k)
+        model.recommend(coerce_item_ids(row.positive_history_item_ids), max_k)
         for row in eval_frame.itertuples(index=False)
     ]
     relevant_items = [[int(target_item_id)] for target_item_id in eval_frame["target_item_id"]]
@@ -178,7 +181,7 @@ def evaluate_item_knn_model(
 
 
 def _validate_train_frame(train_frame: pd.DataFrame) -> None:
-    required_columns = {"history_item_ids", "target_item_id"}
+    required_columns = {"positive_history_item_ids", "target_item_id"}
     missing_columns = sorted(required_columns - set(train_frame.columns))
     if missing_columns:
         msg = f"train 데이터에 필요한 컬럼이 없습니다: {missing_columns}"

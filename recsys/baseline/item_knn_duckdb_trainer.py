@@ -99,16 +99,16 @@ def _fit_neighbors_with_duckdb(
                 row_number() OVER () AS example_id,
                 target_item_id,
                 list_slice(
-                    history_item_ids,
-                    greatest(len(history_item_ids) - ? + 1, 1),
-                    len(history_item_ids)
-                ) AS history_item_ids
+                    positive_history_item_ids,
+                    greatest(len(positive_history_item_ids) - ? + 1, 1),
+                    len(positive_history_item_ids)
+                ) AS positive_history_item_ids
             FROM read_parquet('{parquet_path}')
         ),
         history_pairs AS (
             SELECT DISTINCT
                 example_id,
-                unnest(history_item_ids) AS source_item_id,
+                unnest(positive_history_item_ids) AS source_item_id,
                 target_item_id
             FROM examples
         ),

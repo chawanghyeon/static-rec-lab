@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from recsys.data import PreprocessConfig, preprocess_ratings_csv
+from recsys.data import PreprocessConfig, preprocess_ratings_csv, write_preprocess_report
 
 
 def parse_args() -> argparse.Namespace:
@@ -26,13 +26,31 @@ def parse_args() -> argparse.Namespace:
         "--min-interactions",
         type=int,
         default=5,
-        help="사용자별 최소 interaction 수",
+        help="사용자별 최소 positive interaction 수",
     )
     parser.add_argument(
         "--max-history-length",
         type=int,
         default=50,
         help="history 최대 길이. 0 이하이면 제한하지 않습니다.",
+    )
+    parser.add_argument(
+        "--min-rating",
+        type=float,
+        default=4.0,
+        help="positive interaction으로 사용할 최소 rating",
+    )
+    parser.add_argument(
+        "--neutral-rating",
+        type=float,
+        default=3.0,
+        help="neutral interaction으로 사용할 최소 rating",
+    )
+    parser.add_argument(
+        "--report-path",
+        type=Path,
+        default=Path("reports/local/preprocess.md"),
+        help="전처리 리포트 저장 경로",
     )
     return parser.parse_args()
 
@@ -46,12 +64,16 @@ def main() -> None:
         config=PreprocessConfig(
             min_interactions=args.min_interactions,
             max_history_length=max_history_length,
+            min_rating=args.min_rating,
+            neutral_rating=args.neutral_rating,
         ),
     )
+    report_path = write_preprocess_report(args.report_path, result)
 
     print(f"전처리 완료: users={result.num_users}, interactions={result.num_interactions}")
     for split_name, output_path in result.paths.items():
         print(f"- {split_name}: {result.split_counts[split_name]} examples -> {output_path}")
+    print(f"- report: {report_path}")
 
 
 if __name__ == "__main__":

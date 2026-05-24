@@ -19,7 +19,7 @@ Generative Retrieval 추천 시스템입니다.
 
 ## 구현한 것
 
-- MovieLens sequential recommendation 전처리
+- MovieLens feedback-aware sequential recommendation 전처리
 - Recall@K, NDCG@K, MRR 평가 지표
 - Popularity 및 item co-occurrence baseline
 - interaction embedding 기반 Semantic ID 생성
@@ -28,35 +28,35 @@ Generative Retrieval 추천 시스템입니다.
 - parquet batch streaming 기반 Generative Retrieval 학습/평가
 - YouTube `static_decoding` package 기반 constrained beam search
 - naive trie 및 검증용 matrix decoder와의 mask 일치 검증
-- decoder latency, throughput, generated sequence validity benchmark
-- FastAPI recommendation endpoint와 model-backed serving benchmark
-- FastAPI HTTP endpoint benchmark
+- decoder latency, throughput, generated sequence validity benchmark script
+- FastAPI recommendation endpoint
 
 ## 핵심 결과
 
-MovieLens 32M 기준 결과입니다. Latest Small은 개발용 smoke test로만 사용하고,
-최종 성능 수치는 `ml-32m` 산출물을 기준으로 정리했습니다.
+MovieLens 32M feedback-aware 전처리 기준으로 전체 pipeline을 재실행했습니다.
 
 | 항목 | 결과 |
 | --- | ---: |
-| Generative Retrieval Recall@20 | 0.127769 |
-| Generative Retrieval NDCG@20 | 0.061637 |
-| Generative Retrieval MRR@20 | 0.042813 |
+| raw ratings | 32,000,204 |
+| eligible full history interactions | 31,935,252 |
+| train examples | 15,411,717 |
+| Semantic ID catalog items | 54,711 |
+| Popularity test Recall@20 | 0.069374 |
+| Item co-occurrence test Recall@20 | 0.105408 |
+| Generative Retrieval test Recall@20 | 0.134848 |
+| Generative Retrieval test NDCG@20 | 0.064866 |
+| Generative Retrieval test MRR@20 | 0.044822 |
 | test invalid generation rate | 0.000000 |
-| decoder benchmark batch 512 speedup | 6.66x |
-| serving benchmark batch 128 평균 latency | 11.3422 ms |
-| serving benchmark batch 128 throughput | 88.15 req/s |
-| HTTP endpoint benchmark batch 128 평균 latency | 14.1033 ms |
-| HTTP endpoint benchmark batch 128 throughput | 70.89 req/s |
 
 해석:
 
-- 현재 generative model은 작은 Transformer를 1 epoch 학습한 baseline입니다.
-- `ml-32m` test split에서 Popularity baseline의 Recall@20 `0.058100`, item co-occurrence
-  baseline의 Recall@20 `0.099016`보다 높은 `0.127769`을 기록했습니다.
-- constrained decoding 적용 후 존재하지 않는 Semantic ID 생성률을 0으로 유지했습니다.
-- 이 프로젝트의 핵심 성과는 추천 정확도 1등이 아니라, Generative Retrieval에서 constrained
-  decoding을 실제 추천 pipeline과 benchmark, serving까지 연결한 것입니다.
+- target은 `rating >= 4.0` positive item으로 제한하고, history에는 negative, neutral,
+  positive interaction을 모두 유지합니다.
+- Generative Retrieval은 `ml-32m` test split에서 Item co-occurrence baseline의 Recall@20
+  `0.105408`보다 높은 `0.134848`을 기록했습니다.
+- constrained decoding 적용 후 존재하지 않는 Semantic ID 생성률은 0으로 유지했습니다.
+- API는 학습 checkpoint, Semantic ID catalog, STATIC decoding index, feedback-aware user
+  history parquet를 고정 artifact 경로에서 직접 로드합니다.
 
 ## static_decoding 적용 방식
 
@@ -89,19 +89,15 @@ make preprocess-ml32m
 make baseline-ml32m
 make semantic-ids-ml32m
 make generative-ml32m
-make benchmark-ml32m
 ```
 
 ## 대표 리포트
 
-- [MovieLens 32M 대용량 검증](ml_32m_validation.md)
-- [ml-32m baseline](ml_32m_baseline.md)
-- [ml-32m Semantic ID](ml_32m_semantic_id.md)
-- [ml-32m Generative Retrieval teacher-forcing](ml_32m_generative.md)
-- [ml-32m Generative Retrieval ranking](ml_32m_generative_eval.md)
-- [ml-32m decoder benchmark](ml_32m_decoder_benchmark.md)
-- [ml-32m serving benchmark](ml_32m_serving_benchmark.md)
-- [ml-32m HTTP endpoint benchmark](ml_32m_http_serving_benchmark.md)
+- `ml_32m_preprocess.md`
+- `ml_32m_baseline.md`
+- `ml_32m_semantic_id.md`
+- `ml_32m_generative.md`
+- `ml_32m_generative_eval.md`
 
 ## 산출물 정책
 

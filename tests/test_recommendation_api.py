@@ -37,6 +37,7 @@ def model_config(tmp_path_factory: pytest.TempPathFactory) -> ModelRecommendatio
         {
             "user_id": [10, 123, 123],
             "history_item_ids": [[1002], [1000], [1000, 1001]],
+            "history_feedback_ids": [[3], [3], [3, 3]],
             "target_timestamp": [1, 1, 2],
         }
     ).to_parquet(history_path, index=False)

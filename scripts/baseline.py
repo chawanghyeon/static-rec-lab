@@ -174,7 +174,9 @@ def eval_baseline(args: argparse.Namespace) -> None:
         evaluations.append(
             BaselineEvaluation(
                 model_name="Item co-occurrence",
-                description="사용자 history item과 target item의 co-occurrence count 기반 baseline",
+                description=(
+                    "사용자 positive history item과 target item의 co-occurrence count 기반 baseline"
+                ),
                 num_train_examples=item_knn_model.num_train_examples,
                 num_items=item_knn_model.num_items,
                 valid_metrics=valid_metrics,

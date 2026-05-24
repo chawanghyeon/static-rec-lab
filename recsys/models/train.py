@@ -62,6 +62,7 @@ def train_one_epoch(
         ):
             logits = model(
                 batch.history_item_ids,
+                batch.history_feedback_ids,
                 batch.history_padding_mask,
                 batch.decoder_input_ids,
             )
@@ -142,6 +143,7 @@ def evaluate_model(
         ):
             logits = model(
                 batch.history_item_ids,
+                batch.history_feedback_ids,
                 batch.history_padding_mask,
                 batch.decoder_input_ids,
             )
@@ -185,6 +187,7 @@ def move_batch_to_device(batch: GenerativeBatch, device: torch.device) -> Genera
     """Batch tensor를 device로 이동한다."""
     return GenerativeBatch(
         history_item_ids=batch.history_item_ids.to(device, non_blocking=True),
+        history_feedback_ids=batch.history_feedback_ids.to(device, non_blocking=True),
         history_padding_mask=batch.history_padding_mask.to(device, non_blocking=True),
         decoder_input_ids=batch.decoder_input_ids.to(device, non_blocking=True),
         target_token_ids=batch.target_token_ids.to(device, non_blocking=True),

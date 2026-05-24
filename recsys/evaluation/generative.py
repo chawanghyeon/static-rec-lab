@@ -12,7 +12,7 @@ import pandas as pd
 import pyarrow.parquet as pq
 import torch
 
-from recsys.data import coerce_item_ids
+from recsys.data import coerce_feedback_ids, coerce_item_ids
 from recsys.decoding import (
     STATIC_DECODING_DECODER_NAME,
     StaticDecodingIndex,
@@ -65,6 +65,7 @@ class GenerativeRankingEvaluation:
 @dataclass(frozen=True)
 class _EvaluationRow:
     history_item_ids: object
+    history_feedback_ids: object
     target_item_id: int
 
 
@@ -86,6 +87,7 @@ def evaluate_generative_ranking(
     rows = (
         _EvaluationRow(
             history_item_ids=row.history_item_ids,
+            history_feedback_ids=row.history_feedback_ids,
             target_item_id=int(cast(Any, row.target_item_id)),
         )
         for row in eval_frame.itertuples(index=False)
@@ -183,9 +185,11 @@ def _evaluate_generative_ranking_rows(
     started_at = perf_counter()
 
     histories: list[tuple[int, ...]] = []
+    feedback_histories: list[tuple[int, ...]] = []
     target_item_ids: list[int] = []
     for row in rows:
         histories.append(coerce_item_ids(row.history_item_ids))
+        feedback_histories.append(coerce_feedback_ids(row.history_feedback_ids))
         target_item_ids.append(row.target_item_id)
         if len(histories) < inference_batch_size:
             continue
@@ -202,6 +206,7 @@ def _evaluate_generative_ranking_rows(
             codec=codec,
             item_to_index=item_to_index,
             histories=histories,
+            feedback_histories=feedback_histories,
             target_item_ids=target_item_ids,
             recommendations=recommendations,
             relevant_items=relevant_items,
@@ -217,6 +222,7 @@ def _evaluate_generative_ranking_rows(
         history_filtered_items += history_filtered
         duplicate_items += duplicate
         histories = []
+        feedback_histories = []
         target_item_ids = []
 
     if histories:
@@ -232,6 +238,7 @@ def _evaluate_generative_ranking_rows(
             codec=codec,
             item_to_index=item_to_index,
             histories=histories,
+            feedback_histories=feedback_histories,
             target_item_ids=target_item_ids,
             recommendations=recommendations,
             relevant_items=relevant_items,
@@ -276,6 +283,7 @@ def _evaluate_generative_ranking_batch(
     codec: SemanticIdCodec,
     item_to_index: Mapping[int, int],
     histories: Sequence[Sequence[int]],
+    feedback_histories: Sequence[Sequence[int]],
     target_item_ids: Sequence[int],
     recommendations: list[tuple[int, ...]],
     relevant_items: list[tuple[int]],
@@ -290,6 +298,7 @@ def _evaluate_generative_ranking_batch(
                 decoder=decoder,
                 codec=codec,
                 history_item_ids=histories[0],
+                history_feedback_ids=feedback_histories[0],
                 item_to_index=item_to_index,
                 k=max_k,
                 beam_size=effective_beam_size,
@@ -303,6 +312,7 @@ def _evaluate_generative_ranking_batch(
             decoder=decoder,
             codec=codec,
             history_item_ids_batch=histories,
+            history_feedback_ids_batch=feedback_histories,
             item_to_index=item_to_index,
             k=max_k,
             beam_size=effective_beam_size,
@@ -335,12 +345,13 @@ def _iter_eval_rows_from_parquet(
     parquet_file = pq_module.ParquetFile(eval_parquet)
     for record_batch in parquet_file.iter_batches(
         batch_size=parquet_batch_size,
-        columns=["history_item_ids", "target_item_id"],
+        columns=["history_item_ids", "history_feedback_ids", "target_item_id"],
     ):
         frame = record_batch.to_pandas()
         for row in frame.itertuples(index=False):
             yield _EvaluationRow(
                 history_item_ids=row.history_item_ids,
+                history_feedback_ids=row.history_feedback_ids,
                 target_item_id=int(cast(Any, row.target_item_id)),
             )
             yielded += 1
@@ -354,6 +365,7 @@ def recommend_with_constrained_generation(
     decoder: StaticDecodingIndex,
     codec: SemanticIdCodec,
     history_item_ids: Sequence[int],
+    history_feedback_ids: Sequence[int] | None = None,
     item_to_index: Mapping[int, int],
     k: int,
     beam_size: int,
@@ -373,6 +385,7 @@ def recommend_with_constrained_generation(
         index=decoder,
         torch_index=static_decoding_torch_index,
         history_item_ids=history_item_ids,
+        history_feedback_ids=history_feedback_ids,
         item_to_index=item_to_index,
         beam_size=max(beam_size, k),
         max_results=max(beam_size, k),
@@ -392,6 +405,7 @@ def recommend_batch_with_constrained_generation(
     decoder: StaticDecodingIndex,
     codec: SemanticIdCodec,
     history_item_ids_batch: Sequence[Sequence[int]],
+    history_feedback_ids_batch: Sequence[Sequence[int]] | None = None,
     item_to_index: Mapping[int, int],
     k: int,
     beam_size: int,
@@ -411,6 +425,7 @@ def recommend_batch_with_constrained_generation(
         index=decoder,
         torch_index=static_decoding_torch_index,
         history_item_ids_batch=history_item_ids_batch,
+        history_feedback_ids_batch=history_feedback_ids_batch,
         item_to_index=item_to_index,
         beam_size=max(beam_size, k),
         max_results=max(beam_size, k),
@@ -558,7 +573,7 @@ def write_generative_ranking_report(
 
 
 def _validate_eval_frame(eval_frame: pd.DataFrame) -> None:
-    required_columns = {"history_item_ids", "target_item_id"}
+    required_columns = {"history_item_ids", "history_feedback_ids", "target_item_id"}
     missing_columns = sorted(required_columns - set(eval_frame.columns))
     if missing_columns:
         msg = f"eval 데이터에 필요한 컬럼이 없습니다: {missing_columns}"

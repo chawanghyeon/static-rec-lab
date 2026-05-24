@@ -13,12 +13,12 @@
 - depth: 4
 - branching factor: 32
 - capacity: 1048576
-- item 수: 84259
+- item 수: 54711
 - Semantic ID 길이: 4
-- train example 수: 31397360
-- embedding 계산 example 수: 31397360
+- train example 수: 15411717
+- embedding 계산 example 수: 15411717
 - embedding dimension: 35
-- context edge 수: 1342214049
+- context edge 수: 384030358
 - output: `artifacts/semantic_id/ml-32m/semantic_ids.json`
 
 ## 검증

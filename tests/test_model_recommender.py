@@ -25,6 +25,7 @@ def test_model_recommendation_service_returns_constrained_items(tmp_path: Path) 
         {
             "user_id": [1, 1],
             "history_item_ids": [[10], [10, 20]],
+            "history_feedback_ids": [[3], [3, 3]],
             "target_timestamp": [1, 2],
         }
     ).to_parquet(history_path, index=False)

@@ -66,8 +66,8 @@ def write_baseline_comparison_report(
             "## 해석",
             "",
             "Popularity baseline은 개인화 없이 전체 train split에서 자주 등장한 item을 추천합니다.",
-            "Item co-occurrence baseline은 사용자 history의 item과 함께 등장한 target item을 "
-            "집계해 개인화된 추천을 만듭니다.",
+            "Item co-occurrence baseline은 사용자 positive history item과 함께 등장한 "
+            "target item을 집계해 개인화된 추천을 만듭니다.",
             "이 결과는 이후 Generative Retrieval 모델의 비교 기준으로 사용합니다.",
             "",
         ]

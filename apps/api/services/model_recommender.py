@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -11,7 +11,7 @@ import pandas as pd
 import torch
 
 from apps.api.services.base import RecommendedItem
-from recsys.data import coerce_item_ids
+from recsys.data import coerce_feedback_ids, coerce_item_ids
 from recsys.decoding import (
     STATIC_DECODING_DECODER_NAME,
     StaticDecodingIndex,
@@ -38,6 +38,14 @@ class ModelRecommendationConfig:
     static_decoding_index_path: Path | None = None
 
 
+@dataclass(frozen=True)
+class UserHistory:
+    """API serving에 사용할 사용자 history."""
+
+    item_ids: tuple[int, ...]
+    feedback_ids: tuple[int, ...]
+
+
 class ModelRecommendationService:
     """학습된 checkpoint와 STATIC decoder를 사용하는 recommendation service."""
 
@@ -49,7 +57,7 @@ class ModelRecommendationService:
         model: Any,
         item_to_index: Mapping[int, int],
         codec: SemanticIdCodec,
-        user_histories: Mapping[int, Sequence[int]],
+        user_histories: Mapping[int, UserHistory],
         device: torch.device,
         beam_size: int = 50,
         static_decoding_index_path: Path | None = None,
@@ -67,8 +75,7 @@ class ModelRecommendationService:
             self._static_decoding_index.to_torch(device)
         )
         self._user_histories = {
-            int(user_id): tuple(int(item_id) for item_id in history)
-            for user_id, history in user_histories.items()
+            int(user_id): history for user_id, history in user_histories.items()
         }
         self._beam_size = beam_size
 
@@ -95,12 +102,13 @@ class ModelRecommendationService:
             msg = "k는 1 이상이어야 합니다."
             raise ValueError(msg)
 
-        history = self._user_histories.get(user_id, ())
+        history = self._user_histories.get(user_id, UserHistory(item_ids=(), feedback_ids=()))
         beam_results = generate_semantic_ids_with_static_decoding(
             model=self._model,
             index=self._static_decoding_index,
             torch_index=self._static_decoding_torch_index,
-            history_item_ids=history,
+            history_item_ids=history.item_ids,
+            history_feedback_ids=history.feedback_ids,
             item_to_index=self._item_to_index,
             beam_size=max(self._beam_size, k),
             max_results=k,
@@ -129,10 +137,10 @@ class ModelRecommendationService:
         return recommendations
 
 
-def load_user_histories(path: str | Path) -> dict[int, tuple[int, ...]]:
+def load_user_histories(path: str | Path) -> dict[int, UserHistory]:
     """전처리 parquet에서 user_id별 최신 history를 로드한다."""
     frame = pd.read_parquet(path)
-    required_columns = {"user_id", "history_item_ids"}
+    required_columns = {"user_id", "history_item_ids", "history_feedback_ids"}
     missing_columns = sorted(required_columns - set(frame.columns))
     if missing_columns:
         msg = f"user history parquet에 필요한 컬럼이 없습니다: {missing_columns}"
@@ -141,8 +149,13 @@ def load_user_histories(path: str | Path) -> dict[int, tuple[int, ...]]:
     if "target_timestamp" in frame.columns:
         frame = frame.sort_values(["user_id", "target_timestamp"], kind="mergesort")
 
-    histories: dict[int, tuple[int, ...]] = {}
+    histories: dict[int, UserHistory] = {}
     for row in frame.itertuples(index=False):
         user_id = int(cast(Any, row.user_id))
-        histories[user_id] = coerce_item_ids(row.history_item_ids)
+        item_ids = coerce_item_ids(row.history_item_ids)
+        feedback_ids = coerce_feedback_ids(row.history_feedback_ids)
+        if len(item_ids) != len(feedback_ids):
+            msg = "history_item_ids와 history_feedback_ids 길이가 같아야 합니다."
+            raise ValueError(msg)
+        histories[user_id] = UserHistory(item_ids=item_ids, feedback_ids=feedback_ids)
     return histories

@@ -8,6 +8,7 @@ from apps.api.services.base import RecommendationService, RecommendedItem
 from apps.api.services.model_recommender import (
     ModelRecommendationConfig,
     ModelRecommendationService,
+    UserHistory,
     load_user_histories,
 )
 
@@ -17,6 +18,7 @@ __all__ = [
     "ModelRecommendationService",
     "RecommendationService",
     "RecommendedItem",
+    "UserHistory",
     "build_default_recommendation_service",
     "load_user_histories",
 ]

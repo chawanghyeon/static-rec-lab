@@ -12,6 +12,7 @@ import pyarrow.parquet as pq
 import torch
 from torch.utils.data import IterableDataset, get_worker_info
 
+from recsys.data import FEEDBACK_VOCAB_SIZE, PAD_FEEDBACK_ID
 from recsys.semantic_id import SemanticIdCodec
 
 PAD_ITEM_INDEX = 0
@@ -26,9 +27,26 @@ class GenerativeBatch:
     """Transformer 학습 batch."""
 
     history_item_ids: torch.Tensor
+    history_feedback_ids: torch.Tensor
     history_padding_mask: torch.Tensor
     decoder_input_ids: torch.Tensor
     target_token_ids: torch.Tensor
+
+
+@dataclass(frozen=True)
+class TargetCoverage:
+    """Semantic ID codec이 parquet target을 얼마나 포함하는지 나타낸다."""
+
+    total_examples: int
+    known_target_examples: int
+    unknown_target_examples: int
+
+    @property
+    def unknown_target_rate(self) -> float:
+        """codec에 없는 target 비율."""
+        if self.total_examples == 0:
+            return 0.0
+        return self.unknown_target_examples / self.total_examples
 
 
 class GenerativeParquetBatchIterableDataset(IterableDataset[GenerativeBatch]):
@@ -93,12 +111,12 @@ class GenerativeParquetBatchIterableDataset(IterableDataset[GenerativeBatch]):
         for record_batch in parquet_file.iter_batches(
             batch_size=self._parquet_batch_size,
             row_groups=row_groups,
-            columns=["history_item_ids", "target_item_id"],
+            columns=["history_item_ids", "history_feedback_ids", "target_item_id"],
         ):
             if worker_max_examples is not None and yielded >= worker_max_examples:
                 return
 
-            history_item_ids, history_padding_mask, target_token_ids = (
+            history_item_ids, history_feedback_ids, history_padding_mask, target_token_ids = (
                 _record_batch_to_generative_arrays(
                     record_batch,
                     item_index_lookup=self._item_index_lookup,
@@ -114,6 +132,7 @@ class GenerativeParquetBatchIterableDataset(IterableDataset[GenerativeBatch]):
                 if remaining <= 0:
                     return
                 history_item_ids = history_item_ids[:remaining]
+                history_feedback_ids = history_feedback_ids[:remaining]
                 history_padding_mask = history_padding_mask[:remaining]
                 target_token_ids = target_token_ids[:remaining]
 
@@ -121,6 +140,7 @@ class GenerativeParquetBatchIterableDataset(IterableDataset[GenerativeBatch]):
                 end = start + self._batch_size
                 yield _arrays_to_generative_batch(
                     history_item_ids[start:end],
+                    history_feedback_ids[start:end],
                     history_padding_mask[start:end],
                     target_token_ids[start:end],
                 )
@@ -161,6 +181,97 @@ def build_item_index_from_codec(codec: SemanticIdCodec) -> dict[int, int]:
     return {
         item_id: index for index, item_id in enumerate(sorted(codec.item_to_semantic_id), start=2)
     }
+
+
+def build_item_index_from_parquet(
+    path: str | Path,
+    *,
+    codec: SemanticIdCodec,
+    parquet_batch_size: int = 65_536,
+) -> dict[int, int]:
+    """학습 parquet의 full history와 codec catalog를 합쳐 encoder item vocabulary를 만든다."""
+    if parquet_batch_size < 1:
+        msg = "parquet_batch_size는 1 이상이어야 합니다."
+        raise ValueError(msg)
+    item_ids = set(codec.item_to_semantic_id)
+    pq_module = cast(Any, pq)
+    parquet_file = pq_module.ParquetFile(Path(path))
+    for record_batch in parquet_file.iter_batches(
+        batch_size=parquet_batch_size,
+        columns=["history_item_ids", "target_item_id"],
+    ):
+        target_item_ids = np.asarray(
+            record_batch.column("target_item_id").to_numpy(zero_copy_only=False),
+            dtype=np.int64,
+        )
+        item_ids.update(int(item_id) for item_id in np.unique(target_item_ids).tolist())
+        history_values = _list_array_values_to_numpy(record_batch.column("history_item_ids"))
+        if history_values.size:
+            item_ids.update(int(item_id) for item_id in np.unique(history_values).tolist())
+    return {item_id: index for index, item_id in enumerate(sorted(item_ids), start=2)}
+
+
+def compute_target_coverage_from_parquet(
+    path: str | Path,
+    codec: SemanticIdCodec,
+    *,
+    max_known_examples: int | None = None,
+    parquet_batch_size: int = 65_536,
+) -> TargetCoverage:
+    """parquet target_item_id 중 codec으로 학습/평가 가능한 비율을 계산한다."""
+    if max_known_examples is not None and max_known_examples < 1:
+        msg = "max_known_examples는 None이거나 1 이상이어야 합니다."
+        raise ValueError(msg)
+    if parquet_batch_size < 1:
+        msg = "parquet_batch_size는 1 이상이어야 합니다."
+        raise ValueError(msg)
+
+    known_item_ids = np.asarray(tuple(codec.item_to_semantic_id), dtype=np.int64)
+    total_examples = 0
+    known_target_examples = 0
+    unknown_target_examples = 0
+    pq_module = cast(Any, pq)
+    parquet_file = pq_module.ParquetFile(Path(path))
+
+    for record_batch in parquet_file.iter_batches(
+        batch_size=parquet_batch_size,
+        columns=["target_item_id"],
+    ):
+        if max_known_examples is not None and known_target_examples >= max_known_examples:
+            break
+
+        target_item_ids = np.asarray(
+            record_batch.column("target_item_id").to_numpy(zero_copy_only=False),
+            dtype=np.int64,
+        )
+        known_mask = np.isin(target_item_ids, known_item_ids)
+        if max_known_examples is None:
+            batch_known_targets = int(known_mask.sum())
+            total_examples += int(target_item_ids.shape[0])
+            known_target_examples += batch_known_targets
+            unknown_target_examples += int(target_item_ids.shape[0]) - batch_known_targets
+            continue
+
+        remaining_known_targets = max_known_examples - known_target_examples
+        true_positions = np.flatnonzero(known_mask)
+        if true_positions.shape[0] <= remaining_known_targets:
+            batch_known_targets = int(true_positions.shape[0])
+            total_examples += int(target_item_ids.shape[0])
+            known_target_examples += batch_known_targets
+            unknown_target_examples += int(target_item_ids.shape[0]) - batch_known_targets
+            continue
+
+        stop = int(true_positions[remaining_known_targets - 1]) + 1
+        total_examples += stop
+        known_target_examples += remaining_known_targets
+        unknown_target_examples += stop - remaining_known_targets
+        break
+
+    return TargetCoverage(
+        total_examples=total_examples,
+        known_target_examples=known_target_examples,
+        unknown_target_examples=unknown_target_examples,
+    )
 
 
 def _build_item_index_lookup(item_to_index: Mapping[int, int]) -> np.ndarray:
@@ -206,8 +317,9 @@ def _record_batch_to_generative_arrays(
     item_index_lookup: np.ndarray,
     target_token_lookup: np.ndarray,
     fixed_history_length: int | None = None,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     history_column = record_batch.column("history_item_ids")
+    feedback_column = record_batch.column("history_feedback_ids")
     target_item_ids = np.asarray(
         record_batch.column("target_item_id").to_numpy(zero_copy_only=False),
         dtype=np.int64,
@@ -215,12 +327,24 @@ def _record_batch_to_generative_arrays(
     num_rows = len(target_item_ids)
     if num_rows == 0:
         empty_history = np.empty((0, 1), dtype=np.int64)
+        empty_feedback = np.empty((0, 1), dtype=np.int64)
         empty_padding = np.empty((0, 1), dtype=bool)
         empty_targets = np.empty((0, target_token_lookup.shape[1]), dtype=np.int64)
-        return empty_history, empty_padding, empty_targets
+        return empty_history, empty_feedback, empty_padding, empty_targets
 
     offsets = np.asarray(history_column.offsets.to_numpy(zero_copy_only=False), dtype=np.int64)
     values = np.asarray(history_column.values.to_numpy(zero_copy_only=False), dtype=np.int64)
+    feedback_offsets = np.asarray(
+        feedback_column.offsets.to_numpy(zero_copy_only=False),
+        dtype=np.int64,
+    )
+    feedback_values = np.asarray(
+        feedback_column.values.to_numpy(zero_copy_only=False),
+        dtype=np.int64,
+    )
+    if not np.array_equal(offsets, feedback_offsets):
+        msg = "history_item_ids와 history_feedback_ids의 list offsets가 같아야 합니다."
+        raise ValueError(msg)
     lengths = offsets[1:] - offsets[:-1]
     max_observed_length = int(lengths.max(initial=0))
     max_history_length = (
@@ -233,15 +357,30 @@ def _record_batch_to_generative_arrays(
         )
         raise ValueError(msg)
     history_item_ids = np.full((num_rows, max_history_length), PAD_ITEM_INDEX, dtype=np.int64)
+    history_feedback_ids = np.full(
+        (num_rows, max_history_length),
+        PAD_FEEDBACK_ID,
+        dtype=np.int64,
+    )
     history_padding_mask = np.ones((num_rows, max_history_length), dtype=bool)
 
     if values.size:
+        if values.shape != feedback_values.shape:
+            msg = "history_item_ids와 history_feedback_ids의 길이가 같아야 합니다."
+            raise ValueError(msg)
         mapped_values = np.full(values.shape, UNK_ITEM_INDEX, dtype=np.int64)
         in_lookup = (values >= 0) & (values < item_index_lookup.shape[0])
         mapped_values[in_lookup] = item_index_lookup[values[in_lookup]]
+        valid_feedback = (feedback_values > PAD_FEEDBACK_ID) & (
+            feedback_values < FEEDBACK_VOCAB_SIZE
+        )
+        if not bool(valid_feedback.all()):
+            msg = "history_feedback_ids에 알 수 없는 feedback id가 있습니다."
+            raise ValueError(msg)
         row_indices = np.repeat(np.arange(num_rows, dtype=np.int64), lengths)
         col_indices = np.arange(values.size, dtype=np.int64) - np.repeat(offsets[:-1], lengths)
         history_item_ids[row_indices, col_indices] = mapped_values
+        history_feedback_ids[row_indices, col_indices] = feedback_values
         history_padding_mask[row_indices, col_indices] = False
 
     in_target_lookup = (target_item_ids >= 0) & (target_item_ids < target_token_lookup.shape[0])
@@ -250,14 +389,16 @@ def _record_batch_to_generative_arrays(
     valid_targets = in_target_lookup & (target_token_ids[:, 0] >= 0)
     if not bool(valid_targets.all()):
         history_item_ids = history_item_ids[valid_targets]
+        history_feedback_ids = history_feedback_ids[valid_targets]
         history_padding_mask = history_padding_mask[valid_targets]
         target_token_ids = target_token_ids[valid_targets]
 
-    return history_item_ids, history_padding_mask, target_token_ids
+    return history_item_ids, history_feedback_ids, history_padding_mask, target_token_ids
 
 
 def _arrays_to_generative_batch(
     history_item_ids: np.ndarray,
+    history_feedback_ids: np.ndarray,
     history_padding_mask: np.ndarray,
     target_token_ids: np.ndarray,
 ) -> GenerativeBatch:
@@ -267,7 +408,14 @@ def _arrays_to_generative_batch(
     decoder_input_ids[:, 1:] = target_tensor[:, :-1]
     return GenerativeBatch(
         history_item_ids=torch.as_tensor(history_item_ids, dtype=torch.long),
+        history_feedback_ids=torch.as_tensor(history_feedback_ids, dtype=torch.long),
         history_padding_mask=torch.as_tensor(history_padding_mask, dtype=torch.bool),
         decoder_input_ids=decoder_input_ids,
         target_token_ids=target_tensor,
     )
+
+
+def _list_array_values_to_numpy(array: Any) -> np.ndarray:
+    if hasattr(array, "combine_chunks"):
+        array = array.combine_chunks()
+    return np.asarray(array.values.to_numpy(zero_copy_only=False), dtype=np.int64)

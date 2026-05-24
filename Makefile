@@ -1,6 +1,9 @@
 UV ?= uv
 PYTHON_TARGETS := apps recsys scripts tests
 RAW_RATINGS ?= data/raw/ml-latest-small/ratings.csv
+MIN_RATING ?= 4.0
+NEUTRAL_RATING ?= 3.0
+PREPROCESS_REPORT ?= reports/local/preprocess.md
 MOVIELENS_RAW_DIR ?= data/raw
 MOVIELENS_DATASET ?= ml-latest-small
 MOVIELENS_URL ?= https://files.grouplens.org/datasets/movielens/ml-latest-small.zip
@@ -73,6 +76,7 @@ MAX_HISTORY_LENGTH ?= 50
 ML32M_URL ?= https://files.grouplens.org/datasets/movielens/ml-32m.zip
 ML32M_RAW_RATINGS ?= data/raw/ml-32m/ratings.csv
 ML32M_PROCESSED_DIR ?= data/processed/ml-32m
+ML32M_PREPROCESS_REPORT ?= reports/ml_32m_preprocess.md
 ML32M_BASELINE_DIR ?= artifacts/baseline/ml-32m
 ML32M_BASELINE_REPORT ?= reports/ml_32m_baseline.md
 ML32M_SEMANTIC_ID_PATH ?= artifacts/semantic_id/ml-32m/semantic_ids.json
@@ -119,7 +123,10 @@ preprocess:
 		--ratings-csv $(RAW_RATINGS) \
 		--output-dir $(PROCESSED_DIR) \
 		--min-interactions $(MIN_INTERACTIONS) \
-		--max-history-length $(MAX_HISTORY_LENGTH)
+		--max-history-length $(MAX_HISTORY_LENGTH) \
+		--min-rating $(MIN_RATING) \
+		--neutral-rating $(NEUTRAL_RATING) \
+		--report-path $(PREPROCESS_REPORT)
 
 train-baseline:
 	$(UV) run python scripts/baseline.py train \
@@ -224,7 +231,8 @@ download-ml32m:
 preprocess-ml32m:
 	$(MAKE) preprocess \
 		RAW_RATINGS=$(ML32M_RAW_RATINGS) \
-		PROCESSED_DIR=$(ML32M_PROCESSED_DIR)
+		PROCESSED_DIR=$(ML32M_PROCESSED_DIR) \
+		PREPROCESS_REPORT=$(ML32M_PREPROCESS_REPORT)
 
 baseline-ml32m:
 	$(MAKE) train-baseline \
@@ -287,7 +295,7 @@ benchmark-ml32m:
 	$(MAKE) benchmark-api \
 		HTTP_SERVING_BENCHMARK_REPORT=$(ML32M_HTTP_SERVING_BENCHMARK_REPORT)
 
-reproduce-ml32m: preprocess-ml32m baseline-ml32m semantic-ids-ml32m generative-ml32m benchmark-ml32m
+reproduce-ml32m: preprocess-ml32m baseline-ml32m semantic-ids-ml32m generative-ml32m
 
 serve-api:
 	$(UV) run uvicorn apps.api.main:app --host $(API_HOST) --port $(API_PORT) --reload

@@ -17,6 +17,7 @@ def test_fit_item_knn_model_builds_neighbors_from_history_targets() -> None:
     train_frame = pd.DataFrame(
         {
             "history_item_ids": [[1, 2], [1], [2], [1, 3]],
+            "positive_history_item_ids": [[1, 2], [1], [2], [1, 3]],
             "target_item_id": [10, 10, 20, 20],
         }
     )
@@ -39,6 +40,7 @@ def test_fit_item_knn_model_from_parquet_uses_all_examples(tmp_path: Path) -> No
     train_frame = pd.DataFrame(
         {
             "history_item_ids": [[1, 2], [1], [2], [1, 3]],
+            "positive_history_item_ids": [[1, 2], [1], [2], [1, 3]],
             "target_item_id": [10, 10, 20, 20],
         }
     )
@@ -70,6 +72,7 @@ def test_fit_item_knn_model_from_parquet_respects_max_history_items_and_deduplic
     train_frame = pd.DataFrame(
         {
             "history_item_ids": [[1, 2, 3], [1, 1]],
+            "positive_history_item_ids": [[1, 2, 3], [1, 1]],
             "target_item_id": [10, 20],
         }
     )
@@ -154,7 +157,9 @@ def test_evaluate_item_knn_model_reports_metrics() -> None:
         max_candidates_per_item=10,
         max_history_items=50,
     )
-    eval_frame = pd.DataFrame({"history_item_ids": [[1], [20]], "target_item_id": [10, 10]})
+    eval_frame = pd.DataFrame(
+        {"positive_history_item_ids": [[1], [20]], "target_item_id": [10, 10]}
+    )
 
     metrics = evaluate_item_knn_model(model, eval_frame, cutoffs=[1])
 

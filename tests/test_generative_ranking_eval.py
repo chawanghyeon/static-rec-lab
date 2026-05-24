@@ -28,6 +28,7 @@ def test_evaluate_generative_ranking_computes_recommendation_metrics() -> None:
     frame = pd.DataFrame(
         {
             "history_item_ids": [[10], [30]],
+            "history_feedback_ids": [[3], [1]],
             "target_item_id": [20, 999],
         }
     )
@@ -64,6 +65,7 @@ def test_evaluate_generative_ranking_loads_static_decoding_index_artifact(
     frame = pd.DataFrame(
         {
             "history_item_ids": [[10]],
+            "history_feedback_ids": [[3]],
             "target_item_id": [20],
         }
     )
@@ -89,6 +91,7 @@ def test_evaluate_generative_ranking_supports_batched_inference() -> None:
     frame = pd.DataFrame(
         {
             "history_item_ids": [[10], [30]],
+            "history_feedback_ids": [[3], [1]],
             "target_item_id": [20, 999],
         }
     )
@@ -136,6 +139,7 @@ def test_evaluate_generative_ranking_from_parquet_streams_rows(tmp_path: Path) -
     frame = pd.DataFrame(
         {
             "history_item_ids": [[10], [30]],
+            "history_feedback_ids": [[3], [1]],
             "target_item_id": [20, 999],
         }
     )
@@ -223,6 +227,7 @@ def test_write_generative_ranking_report(tmp_path: Path) -> None:
     frame = pd.DataFrame(
         {
             "history_item_ids": [[10]],
+            "history_feedback_ids": [[3]],
             "target_item_id": [20],
         }
     )
@@ -261,7 +266,7 @@ def test_evaluate_generative_ranking_rejects_missing_columns() -> None:
             model=cast(GenerativeRetriever, _FakeGenerativeModel()),
             item_to_index={20: 2},
             codec=_codec(),
-            eval_frame=pd.DataFrame({"history_item_ids": [[10]]}),
+            eval_frame=pd.DataFrame({"history_item_ids": [[10]], "history_feedback_ids": [[3]]}),
             split_name="valid",
             cutoffs=(1,),
             beam_size=3,
@@ -290,6 +295,7 @@ class _FakeGenerativeModel:
     def __call__(
         self,
         history_item_ids: torch.Tensor,
+        _history_feedback_ids: torch.Tensor,
         _history_padding_mask: torch.Tensor,
         decoder_input_ids: torch.Tensor,
     ) -> torch.Tensor:

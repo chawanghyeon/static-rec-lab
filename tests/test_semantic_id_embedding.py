@@ -15,6 +15,7 @@ def test_build_item_interaction_embeddings_includes_history_and_target_items() -
     train_frame = pd.DataFrame(
         {
             "history_item_ids": [[1, 2], [2, 3], [4]],
+            "positive_history_item_ids": [[1, 2], [2, 3], [4]],
             "target_item_id": [3, 4, 5],
         }
     )
@@ -34,7 +35,7 @@ def test_build_item_interaction_embeddings_includes_history_and_target_items() -
 
 
 def test_build_item_interaction_embeddings_respects_max_history_items() -> None:
-    train_frame = pd.DataFrame({"history_item_ids": [[1, 2, 3]], "target_item_id": [4]})
+    train_frame = pd.DataFrame({"positive_history_item_ids": [[1, 2, 3]], "target_item_id": [4]})
 
     result = build_item_interaction_embeddings(
         train_frame,
@@ -50,6 +51,7 @@ def test_build_item_interaction_embeddings_from_parquet_matches_frame_counts(
     train_frame = pd.DataFrame(
         {
             "history_item_ids": [[1, 2], [2, 3], [4, 5]],
+            "positive_history_item_ids": [[1, 2], [2, 3], [4, 5]],
             "target_item_id": [3, 4, 6],
         }
     )

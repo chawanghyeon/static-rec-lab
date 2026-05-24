@@ -10,6 +10,8 @@ from recsys.models import (
     GenerativeRetriever,
     GenerativeRetrieverConfig,
     build_item_index_from_codec,
+    build_item_index_from_parquet,
+    compute_target_coverage_from_parquet,
     evaluate_model,
     generate_semantic_ids_batch_with_static_decoding,
     generate_semantic_ids_with_static_decoding,
@@ -29,10 +31,12 @@ def test_generative_parquet_batch_iterable_dataset_streams_batches(tmp_path: Pat
 
     assert len(batches) == 2
     assert batches[0].history_item_ids.shape[0] == 2
+    assert batches[0].history_feedback_ids.shape[0] == 2
     assert batches[0].target_token_ids.shape == (2, 3)
     assert batches[0].decoder_input_ids[:, 0].tolist() == [BOS_TOKEN_ID, BOS_TOKEN_ID]
     assert torch.equal(batches[0].decoder_input_ids[:, 1:], batches[0].target_token_ids[:, :-1])
     assert batches[0].history_item_ids[0, 0].item() == 1
+    assert batches[0].history_feedback_ids[0, 0].item() == 3
     assert batches[0].target_token_ids[0].tolist() == [2, 3, 4]
     assert batches[1].history_item_ids.shape[0] == 1
 
@@ -46,6 +50,55 @@ def test_generative_parquet_batch_iterable_dataset_filters_unknown_targets(
     batch = next(iter(dataset))
 
     assert batch.target_token_ids.shape[0] == 3
+
+
+def test_compute_target_coverage_from_parquet_counts_unknown_targets(
+    tmp_path: Path,
+) -> None:
+    codec = _sample_codec()
+
+    coverage = compute_target_coverage_from_parquet(
+        _write_sample_parquet(tmp_path),
+        codec,
+        parquet_batch_size=2,
+    )
+
+    assert coverage.total_examples == 4
+    assert coverage.known_target_examples == 3
+    assert coverage.unknown_target_examples == 1
+    assert coverage.unknown_target_rate == 0.25
+
+
+def test_compute_target_coverage_from_parquet_respects_known_target_limit(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "coverage.parquet"
+    pd.DataFrame({"target_item_id": [999, 20, 998, 30, 40]}).to_parquet(
+        path,
+        index=False,
+    )
+    codec = _sample_codec()
+
+    coverage = compute_target_coverage_from_parquet(
+        path,
+        codec,
+        max_known_examples=2,
+        parquet_batch_size=5,
+    )
+
+    assert coverage.total_examples == 4
+    assert coverage.known_target_examples == 2
+    assert coverage.unknown_target_examples == 2
+
+
+def test_build_item_index_from_parquet_includes_full_history_items(tmp_path: Path) -> None:
+    codec = _sample_codec()
+
+    item_to_index = build_item_index_from_parquet(_write_sample_parquet(tmp_path), codec=codec)
+
+    assert 10 in item_to_index
+    assert 999 in item_to_index
+    assert set(codec.item_to_semantic_id).issubset(item_to_index)
 
 
 def test_generative_parquet_batch_iterable_dataset_respects_max_examples(
@@ -68,9 +121,12 @@ def test_generative_parquet_batch_iterable_dataset_supports_fixed_history_length
     batch = next(iter(dataset))
 
     assert batch.history_item_ids.shape == (2, 4)
+    assert batch.history_feedback_ids.shape == (2, 4)
     assert batch.history_padding_mask.shape == (2, 4)
     assert batch.history_padding_mask[0].tolist() == [False, True, True, True]
     assert batch.history_padding_mask[1].tolist() == [False, False, True, True]
+    assert batch.history_feedback_ids[0].tolist() == [3, 0, 0, 0]
+    assert batch.history_feedback_ids[1].tolist() == [3, 3, 0, 0]
 
 
 def test_generative_retriever_forward_shape(tmp_path: Path) -> None:
@@ -80,6 +136,7 @@ def test_generative_retriever_forward_shape(tmp_path: Path) -> None:
 
     logits = model(
         batch.history_item_ids,
+        batch.history_feedback_ids,
         batch.history_padding_mask,
         batch.decoder_input_ids,
     )
@@ -237,6 +294,8 @@ def _sample_frame() -> pd.DataFrame:
         {
             "user_id": [1, 1, 2, 2],
             "history_item_ids": [[10], [10, 20], [30], [30, 40]],
+            "history_feedback_ids": [[3], [3, 3], [1], [1, 3]],
+            "positive_history_item_ids": [[10], [10, 20], [], [40]],
             "target_item_id": [20, 30, 40, 999],
             "target_timestamp": [1, 2, 3, 4],
             "history_length": [1, 2, 1, 2],
